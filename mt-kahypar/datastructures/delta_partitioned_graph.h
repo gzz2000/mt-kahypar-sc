@@ -37,6 +37,7 @@
 #include "mt-kahypar/datastructures/sparse_map.h"
 #include "mt-kahypar/datastructures/delta_connectivity_set.h"
 #include "mt-kahypar/datastructures/connectivity_set.h"
+#include "mt-kahypar/datastructures/synchronized_edge_update.h"
 #include "mt-kahypar/parallel/stl/scalable_vector.h"
 #include "mt-kahypar/partition/context.h"
 #include "mt-kahypar/utils/exception.h"
@@ -53,8 +54,6 @@ template <typename PartitionedGraph = Mandatory,
           bool maintain_connectivity_set = false>
 class DeltaPartitionedGraph {
  private:
-  static constexpr size_t MAP_SIZE_LARGE = 16384;
-  static constexpr size_t MAP_SIZE_MOVE_DELTA = 8192;
   static constexpr size_t MAP_SIZE_SMALL = 128;
 
   using HypernodeIterator = typename PartitionedGraph::HypernodeIterator;

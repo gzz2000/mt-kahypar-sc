@@ -26,7 +26,6 @@
 
 #include "tests/datastructures/hypergraph_fixtures.h"
 
-#include <boost_kahypar/range/irange.hpp>
 #include "gmock/gmock.h"
 
 #include <tbb_kahypar/blocked_range.h>
@@ -69,7 +68,7 @@ class AConcurrentHypergraph : public Test {
   {
     int cpu_id = THREAD_ID;
     underlying_hypergraph = io::readInputFile<Hypergraph>(
-      "../tests/instances/contracted_ibm01.hgr", FileFormat::hMetis, true);
+      "../tests/instances/contracted_ibm01.hgr", FileFormat::hMetis, true, true, true);
     hypergraph = PartitionedHypergraph(k, underlying_hypergraph, parallel_tag_t());
     for (const HypernodeID& hn : hypergraph.nodes()) {
       PartitionID id = utils::Randomize::instance().getRandomInt(0, k - 1, cpu_id);

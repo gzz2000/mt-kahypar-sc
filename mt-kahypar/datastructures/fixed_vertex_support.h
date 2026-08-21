@@ -151,10 +151,17 @@ class FixedVertexSupport {
   // ! The function returns false, if u and v are fixed and are assigned to different blocks
   bool contract(const HypernodeID u, const HypernodeID v);
 
+  // ! Contracts v onto u. Unlike `contract`, this assumes than any contractions of other nodes
+  // ! onto v form a new cluster without v instead of joining the same cluster (see deterministic coarsening).
+  bool contractWithoutChains(const HypernodeID u, const HypernodeID v);
+
   // ! Uncontract v from u. This reverts the corresponding contraction operation of v onto u.
   void uncontract(const HypernodeID u, const HypernodeID v);
 
   // ####################### Miscellaneous #######################
+
+  // ! Only for testing
+  bool verifyClustering(const vec<HypernodeID>& cluster_ids) const;
 
   FixedVertexSupport<Hypergraph> copy() const {
     FixedVertexSupport<Hypergraph> cpy;
@@ -174,6 +181,8 @@ class FixedVertexSupport {
   }
 
  private:
+  bool contractImpl(const HypernodeID u, const HypernodeID v, bool ignore_v);
+
   // ! Number of nodes
   HypernodeID _num_nodes;
 

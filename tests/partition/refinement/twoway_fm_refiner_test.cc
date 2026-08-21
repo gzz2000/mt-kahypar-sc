@@ -56,7 +56,7 @@ class ATwoWayFmRefiner : public Test {
     context.partition.gain_policy = GainPolicy::km1; /* change this once cut policy available */
     context.partition.epsilon = 0.25;
     context.partition.k = 2;
-    context.partition.verbose_output = false;
+    context.partition.enable_logging = false;
 
     // Shared Memory
     context.shared_memory.num_threads = 1;
@@ -67,7 +67,7 @@ class ATwoWayFmRefiner : public Test {
 
     // Read hypergraph
     hypergraph = io::readInputFile<Hypergraph>(
-      "../tests/instances/contracted_ibm01.hgr", FileFormat::hMetis, true);
+      "../tests/instances/contracted_ibm01.hgr", FileFormat::hMetis, true, true, true);
     partitioned_hypergraph = PartitionedHypergraph(
       context.partition.k, hypergraph, parallel_tag_t());
     context.setupPartWeights(hypergraph.totalWeight());
@@ -102,12 +102,12 @@ static constexpr double EPS = 0.05;
 
 TEST_F(ATwoWayFmRefiner, UpdatesImbalanceCorrectly) {
   refiner->refine(metrics, *prng);
-  ASSERT_DOUBLE_EQ(metrics::imbalance(partitioned_hypergraph, context), metrics.imbalance);
+  ASSERT_EQ(metrics::imbalance(partitioned_hypergraph, context), metrics.imbalance);
 }
 
 TEST_F(ATwoWayFmRefiner, DoesNotViolateBalanceConstraint) {
   refiner->refine(metrics, *prng);
-  ASSERT_LE(metrics.imbalance, context.partition.epsilon + EPS);
+  ASSERT_LE(metrics.imbalance.imbalance_value, context.partition.epsilon + EPS);
 }
 
 TEST_F(ATwoWayFmRefiner, UpdatesMetricsCorrectly) {

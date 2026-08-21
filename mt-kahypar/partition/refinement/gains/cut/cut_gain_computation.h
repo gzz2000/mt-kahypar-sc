@@ -39,11 +39,14 @@ namespace mt_kahypar {
 
 class CutGainComputation : public GainComputationBase<CutGainComputation, CutAttributedGains> {
   using Base = GainComputationBase<CutGainComputation, CutAttributedGains>;
-  using RatingMap = typename Base::RatingMap;
 
   static constexpr bool enable_heavy_assert = false;
 
  public:
+  using RatingMap = typename Base::RatingMap;
+
+  static constexpr bool is_independent_of_block = true;
+
   CutGainComputation(const Context& context,
                      bool disable_randomization = false) :
     Base(context, disable_randomization) { }
@@ -81,6 +84,21 @@ class CutGainComputation : public GainComputationBase<CutGainComputation, CutAtt
         }
       }
     }
+  }
+
+  // ! Computes only the gain (cut increase) for moving out of the current block.
+  template<typename PartitionedHypergraph>
+  static Gain computeIsolatedBlockGain(const PartitionedHypergraph& phg, const HypernodeID hn) {
+    Gain isolated_block_gain = 0;
+    for (const HyperedgeID& he : phg.incidentEdges(hn)) {
+      PartitionID connectivity = phg.connectivity(he);
+      if (connectivity == 1 && phg.edgeSize(he) > 1) {
+        // In case, the hyperedge is a non-cut hyperedge, we would increase
+        // the cut, if we move vertex hn to an other block.
+        isolated_block_gain += phg.edgeWeight(he);
+      }
+    }
+    return isolated_block_gain;
   }
 
   HyperedgeWeight gain(const Gain to_score,

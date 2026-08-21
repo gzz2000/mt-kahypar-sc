@@ -26,17 +26,15 @@
 
 #pragma once
 
+#include <string>
 #include <vector>
-
-#include <boost_kahypar/program_options.hpp>
 
 #include "mt-kahypar/partition/context_enum_classes.h"
 
-namespace po = boost_kahypar::program_options;
-using option = po::basic_option<char>;
-
 namespace mt_kahypar {
 
-std::vector<option> loadPreset(PresetType preset);
+std::vector<std::string> validPresetTypes();
+
+std::vector<std::string> loadPreset(PresetType preset);
 
 } // namespace mt_kahypar

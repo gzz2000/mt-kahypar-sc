@@ -24,6 +24,8 @@
  * SOFTWARE.
  ******************************************************************************/
 
+#include <thread>
+
 #include "gmock/gmock.h"
 
 #include "mt-kahypar/io/command_line_options.h"
@@ -62,9 +64,9 @@ class AInitialPartitionerTest : public Test {
 
     context.partition.partition_type = PartitionedHypergraph::TYPE;
     if ( !context.isNLevelPartitioning() ) {
-      parseIniToContext(context, "../config/default_preset.ini");
+      parseIniToContext(context, "../config/default_preset.ini", true);
     } else {
-      parseIniToContext(context, "../config/highest_quality_preset.ini");
+      parseIniToContext(context, "../config/highest_quality_preset.ini", true);
     }
     context.partition.partition_type = PartitionedHypergraph::TYPE;
 
@@ -82,7 +84,6 @@ class AInitialPartitionerTest : public Test {
     context.partition.gain_policy = GainPolicy::km1;
     context.partition.epsilon = 0.2;
     context.partition.k = Config::K;
-    context.partition.verbose_output = false;
 
     // Shared Memory
     context.shared_memory.num_threads = num_threads;
@@ -111,7 +112,7 @@ class AInitialPartitionerTest : public Test {
 
     // Read hypergraph
     hypergraph = io::readInputFile<Hypergraph>(
-      "../tests/instances/contracted_unweighted_ibm01.hgr", FileFormat::hMetis, true);
+      "../tests/instances/contracted_unweighted_ibm01.hgr", FileFormat::hMetis, true, true, true);
     partitioned_hypergraph = PartitionedHypergraph(
       context.partition.k, hypergraph, parallel_tag_t());
     context.setupPartWeights(hypergraph.totalWeight());
@@ -146,7 +147,7 @@ class AInitialPartitionerTest : public Test {
 };
 
 template <typename Config>
-size_t AInitialPartitionerTest<Config>::num_threads = HardwareTopology::instance().num_cpus();
+size_t AInitialPartitionerTest<Config>::num_threads = std::thread::hardware_concurrency();
 
 typedef ::testing::Types<TestConfig<StaticHypergraphTypeTraits, Mode::deep_multilevel, 2>,
                          TestConfig<StaticHypergraphTypeTraits, Mode::deep_multilevel, 3>,

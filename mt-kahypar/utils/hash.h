@@ -84,7 +84,7 @@ inline uint64_t hash64_2(uint64_t x) {
   return x;
 }
 
-// from boost_kahypar::hash_combine
+// Based on the hash-combine formula formerly provided by Boost.
 inline uint32_t combine32(uint32_t left, uint32_t hashed_right) {
   return left ^ (hashed_right + 0x9e3779b9 + (left << 6) + (left >> 2));
 }

@@ -31,6 +31,7 @@
 #include "mt-kahypar/parallel/chunking.h"
 #include "mt-kahypar/parallel/parallel_prefix_sum.h"
 #include "mt-kahypar/datastructures/concurrent_bucket_map.h"
+#include "mt-kahypar/datastructures/hypergraph_utils.h"
 #include "mt-kahypar/utils/timer.h"
 #include "mt-kahypar/utils/memory_tree.h"
 
@@ -450,6 +451,7 @@ namespace mt_kahypar::ds {
 
     hypergraph._num_nodes = _num_nodes;
     hypergraph._num_removed_nodes = _num_removed_nodes;
+    hypergraph._max_removed_degree_zero_hn_weight = _max_removed_degree_zero_hn_weight;
     hypergraph._num_edges = _num_edges;
     hypergraph._total_weight = _total_weight;
 
@@ -479,6 +481,7 @@ namespace mt_kahypar::ds {
 
     hypergraph._num_nodes = _num_nodes;
     hypergraph._num_removed_nodes = _num_removed_nodes;
+    hypergraph._max_removed_degree_zero_hn_weight = _max_removed_degree_zero_hn_weight;
     hypergraph._num_edges = _num_edges;
     hypergraph._total_weight = _total_weight;
 
@@ -512,16 +515,7 @@ namespace mt_kahypar::ds {
 
   // ! Computes the total node weight of the hypergraph
   void StaticGraph::computeAndSetTotalNodeWeight(parallel_tag_t) {
-    _total_weight = tbb_kahypar::parallel_reduce(tbb_kahypar::blocked_range<HypernodeID>(ID(0), _num_nodes), 0,
-                                         [this](const tbb_kahypar::blocked_range<HypernodeID>& range, HypernodeWeight init) {
-                                           HypernodeWeight weight = init;
-                                           for (HypernodeID hn = range.begin(); hn < range.end(); ++hn) {
-                                             if (nodeIsEnabled(hn)) {
-                                               weight += this->_nodes[hn].weight();
-                                             }
-                                           }
-                                           return weight;
-                                         }, std::plus<>());
+    _total_weight = computeTotalNodeWeightParallel(*this, _num_nodes);
   }
 
 } // namespace

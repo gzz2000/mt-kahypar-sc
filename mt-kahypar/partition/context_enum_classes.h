@@ -36,13 +36,6 @@
 
 namespace mt_kahypar {
 
-enum class Type : int8_t {
-  Unweighted = 0,
-  EdgeWeights = 1,
-  NodeWeights = 10,
-  EdgeAndNodeWeights = 11,
-};
-
 enum class FileFormat : int8_t {
   hMetis = 0,
   Metis = 1,
@@ -56,6 +49,7 @@ enum class InstanceType : int8_t {
 
 enum class PresetType : int8_t {
   deterministic,
+  deterministic_quality,
   large_k,
   default_preset,
   quality,
@@ -98,13 +92,6 @@ enum class LouvainEdgeWeight : uint8_t {
   uniform,
   non_uniform,
   degree,
-  UNDEFINED
-};
-
-enum class SimiliarNetCombinerStrategy : uint8_t {
-  union_nets,
-  max_size,
-  importance,
   UNDEFINED
 };
 
@@ -154,6 +141,11 @@ enum class LabelPropagationAlgorithm : uint8_t {
   do_nothing
 };
 
+enum class JetAlgorithm : uint8_t {
+  deterministic,
+  do_nothing
+};
+
 enum class FMAlgorithm : uint8_t {
   kway_fm,
   unconstrained_fm,
@@ -163,11 +155,12 @@ enum class FMAlgorithm : uint8_t {
 enum class FlowAlgorithm : uint8_t {
   flow_cutter,
   mock,
-  do_nothing
+  do_nothing,
+  deterministic
 };
 
 enum class RebalancingAlgorithm : uint8_t {
-  simple_rebalancer,
+  deterministic,
   advanced_rebalancer,
   do_nothing
 };
@@ -182,8 +175,6 @@ enum class SteinerTreeFlowValuePolicy : uint8_t {
   upper_bound,
   UNDEFINED
 };
-
-std::ostream & operator<< (std::ostream& os, const Type& type);
 
 std::ostream & operator<< (std::ostream& os, const FileFormat& type);
 
@@ -203,8 +194,6 @@ std::ostream & operator<< (std::ostream& os, const GainPolicy& type);
 
 std::ostream & operator<< (std::ostream& os, const LouvainEdgeWeight& type);
 
-std::ostream & operator<< (std::ostream& os, const SimiliarNetCombinerStrategy& strategy);
-
 std::ostream & operator<< (std::ostream& os, const CoarseningAlgorithm& algo);
 
 std::ostream & operator<< (std::ostream& os, const HeavyNodePenaltyPolicy& heavy_hn_policy);
@@ -216,6 +205,8 @@ std::ostream & operator<< (std::ostream& os, const RatingFunction& func);
 std::ostream & operator<< (std::ostream& os, const InitialPartitioningAlgorithm& algo);
 
 std::ostream & operator<< (std::ostream& os, const LabelPropagationAlgorithm& algo);
+
+std::ostream & operator<< (std::ostream& os, const JetAlgorithm& algo);
 
 std::ostream & operator<< (std::ostream& os, const FMAlgorithm& algo);
 
@@ -229,6 +220,8 @@ std::ostream & operator<< (std::ostream& os, const SteinerTreeFlowValuePolicy& p
 
 Mode modeFromString(const std::string& mode);
 
+FileFormat fileFormatFromString(const std::string& type);
+
 InstanceType instanceTypeFromString(const std::string& type);
 
 PresetType presetTypeFromString(const std::string& type);
@@ -236,8 +229,6 @@ PresetType presetTypeFromString(const std::string& type);
 Objective objectiveFromString(const std::string& obj);
 
 LouvainEdgeWeight louvainEdgeWeightFromString(const std::string& type);
-
-SimiliarNetCombinerStrategy similiarNetCombinerStrategyFromString(const std::string& type);
 
 CoarseningAlgorithm coarseningAlgorithmFromString(const std::string& type);
 
@@ -250,6 +241,8 @@ RatingFunction ratingFunctionFromString(const std::string& function);
 InitialPartitioningAlgorithm initialPartitioningAlgorithmFromString(const std::string& algo);
 
 LabelPropagationAlgorithm labelPropagationAlgorithmFromString(const std::string& type);
+
+JetAlgorithm jetAlgorithmFromString(const std::string& type);
 
 FMAlgorithm fmAlgorithmFromString(const std::string& type);
 

@@ -33,6 +33,16 @@ namespace ds {
 
 template<typename Hypergraph>
 bool FixedVertexSupport<Hypergraph>::contract(const HypernodeID u, const HypernodeID v) {
+  return contractImpl(u, v, false);
+}
+
+template<typename Hypergraph>
+bool FixedVertexSupport<Hypergraph>::contractWithoutChains(const HypernodeID u, const HypernodeID v) {
+  return contractImpl(u, v, true);
+}
+
+template<typename Hypergraph>
+bool FixedVertexSupport<Hypergraph>::contractImpl(const HypernodeID u, const HypernodeID v, bool ignore_v) {
   ASSERT(_hg);
   ASSERT(u < _num_nodes && v < _num_nodes);
   bool success = true;
@@ -99,7 +109,7 @@ bool FixedVertexSupport<Hypergraph>::contract(const HypernodeID u, const Hyperno
   }
   _fixed_vertex_data[u].sync.unlock();
 
-  if ( v_becomes_fixed ) {
+  if ( !ignore_v && v_becomes_fixed ) {
     // Our contraction algorithm ensures that there are no concurrent contractions onto v
     // if v is contracted onto another node. We therefore can set the fixed vertex block of
     // v outside the lock
@@ -144,6 +154,42 @@ void FixedVertexSupport<Hypergraph>::uncontract(const HypernodeID u, const Hyper
       _fixed_vertex_data[v].block = kInvalidPartition;
     }
   }
+}
+
+template<typename Hypergraph>
+bool FixedVertexSupport<Hypergraph>::verifyClustering(const vec<HypernodeID>& cluster_ids) const {
+  vec<PartitionID> fixed_vertex_blocks(_hg->initialNumNodes(), kInvalidPartition);
+  for ( const HypernodeID& hn : _hg->nodes() ) {
+    if ( _hg->isFixed(hn) ) {
+      if ( fixed_vertex_blocks[cluster_ids[hn]] != kInvalidPartition &&
+            fixed_vertex_blocks[cluster_ids[hn]] != _hg->fixedVertexBlock(hn)) {
+        LOG << "There are two nodes assigned to same cluster that belong to different fixed vertex blocks";
+        return false;
+      }
+      fixed_vertex_blocks[cluster_ids[hn]] = _hg->fixedVertexBlock(hn);
+    }
+  }
+
+  vec<HypernodeWeight> expected_block_weights(_k, 0);
+  for ( const HypernodeID& hn : _hg->nodes() ) {
+    if ( fixed_vertex_blocks[cluster_ids[hn]] != kInvalidPartition ) {
+      if ( !isFixed(cluster_ids[hn]) ) {
+        LOG << "Cluster" << cluster_ids[hn] << "should be fixed to block"
+            << fixed_vertex_blocks[cluster_ids[hn]];
+        return false;
+      }
+      expected_block_weights[fixed_vertex_blocks[cluster_ids[hn]]] += _hg->nodeWeight(hn);
+    }
+  }
+
+  for ( PartitionID block = 0; block < _k; ++block ) {
+    if ( fixedVertexBlockWeight(block) != expected_block_weights[block] ) {
+      LOG << "Fixed vertex block" << block << "should have weight" << expected_block_weights[block]
+          << ", but it is" << fixedVertexBlockWeight(block);
+      return false;
+    }
+  }
+  return true;
 }
 
 } // namespace ds

@@ -36,6 +36,16 @@ logging = False
 
 mtk = mtkahypar.initialize(multiprocessing.cpu_count())
 
+# See test_partition_hypergraph_keeps_graph_alive.
+# When `hypergraph` goes out of scope, it should _not_ be deleted.
+def _make_partitioned_hg(context):
+  hypergraph = mtk.create_hypergraph(context, 7, 4, [[0,2],[0,1,3,4],[3,4,6],[2,5,6]])
+  return hypergraph.partition(context)
+
+def _make_mapped_hg(context, target_graph):
+  hypergraph = mtk.hypergraph_from_file(mydir + "/test_instances/ibm01.hgr", context)
+  return hypergraph.map_onto_graph(target_graph, context)
+
 class MainTest(unittest.TestCase):
 
   def test_set_partitioning_parameters_in_context(self):
@@ -52,12 +62,14 @@ class MainTest(unittest.TestCase):
     context.objective = mtkahypar.Objective.CUT
     context.num_vcycles = 5
     context.logging = True
+    context.verbose_logging = False
 
     self.assertEqual(context.k, 4)
     self.assertEqual(context.epsilon, 0.05)
     self.assertEqual(context.objective, mtkahypar.Objective.CUT)
     self.assertEqual(context.num_vcycles, 5)
     self.assertEqual(context.logging, True)
+    self.assertEqual(context.verbose_logging, False)
 
   def test_get_and_set_max_block_weights(self):
     context = mtk.context_from_preset(mtkahypar.PresetType.DEFAULT)
@@ -809,12 +821,31 @@ class MainTest(unittest.TestCase):
     partitioner = self.GraphPartitioner(mtkahypar.PresetType.DETERMINISTIC, 4, 0.03, mtkahypar.Objective.CUT, False)
     partitioner.partition()
 
+  def test_partitions_a_graph_with_deterministic_quality_preset_into_two_blocks(self):
+    partitioner = self.GraphPartitioner(mtkahypar.PresetType.DETERMINISTIC_QUALITY, 2, 0.03, mtkahypar.Objective.CUT, False)
+    partitioner.partition()
+
+  def test_partitions_a_graph_with_deterministic_quality_preset_into_four_blocks(self):
+    partitioner = self.GraphPartitioner(mtkahypar.PresetType.DETERMINISTIC_QUALITY, 4, 0.03, mtkahypar.Objective.CUT, False)
+    partitioner.partition()
+
   def test_partitions_a_graph_into_a_large_number_of_blocks(self):
     partitioner = self.GraphPartitioner(mtkahypar.PresetType.LARGE_K, 1024, 0.03, mtkahypar.Objective.CUT, False)
     partitioner.partition()
 
   def test_checks_if_deterministic_preset_produces_same_result_for_graph(self):
     partitioner = self.GraphPartitioner(mtkahypar.PresetType.DETERMINISTIC, 8, 0.03, mtkahypar.Objective.CUT, False)
+    partitioner.partition()
+    objective_1 = partitioner.partitioned_graph.cut()
+    partitioner.partition()
+    objective_2 = partitioner.partitioned_graph.cut()
+    partitioner.partition()
+    objective_3 = partitioner.partitioned_graph.cut()
+    self.assertEqual(objective_1, objective_2)
+    self.assertEqual(objective_1, objective_3)
+
+  def test_checks_if_deterministic_quality_preset_produces_same_result_for_graph(self):
+    partitioner = self.GraphPartitioner(mtkahypar.PresetType.DETERMINISTIC_QUALITY, 8, 0.03, mtkahypar.Objective.CUT, False)
     partitioner.partition()
     objective_1 = partitioner.partitioned_graph.cut()
     partitioner.partition()
@@ -995,12 +1026,31 @@ class MainTest(unittest.TestCase):
     partitioner = self.HypergraphPartitioner(mtkahypar.PresetType.DETERMINISTIC, 4, 0.03, mtkahypar.Objective.KM1, False)
     partitioner.partition()
 
+  def test_partitions_a_hypergraph_with_deterministic_quality_preset_into_two_blocks(self):
+    partitioner = self.HypergraphPartitioner(mtkahypar.PresetType.DETERMINISTIC_QUALITY, 2, 0.03, mtkahypar.Objective.KM1, False)
+    partitioner.partition()
+
+  def test_partitions_a_hypergraph_with_deterministic_quality_preset_into_four_blocks(self):
+    partitioner = self.HypergraphPartitioner(mtkahypar.PresetType.DETERMINISTIC_QUALITY, 4, 0.03, mtkahypar.Objective.KM1, False)
+    partitioner.partition()
+
   def test_partitions_a_hypergraph_into_a_large_number_of_blocks(self):
     partitioner = self.HypergraphPartitioner(mtkahypar.PresetType.LARGE_K, 512, 0.03, mtkahypar.Objective.KM1, False)
     partitioner.partition()
 
   def test_checks_if_deterministic_preset_produces_same_result_for_hypergraphs(self):
     partitioner = self.HypergraphPartitioner(mtkahypar.PresetType.DETERMINISTIC, 8, 0.03, mtkahypar.Objective.KM1, False)
+    partitioner.partition()
+    objective_1 = partitioner.partitioned_hg.km1()
+    partitioner.partition()
+    objective_2 = partitioner.partitioned_hg.km1()
+    partitioner.partition()
+    objective_3 = partitioner.partitioned_hg.km1()
+    self.assertEqual(objective_1, objective_2)
+    self.assertEqual(objective_1, objective_3)
+
+  def test_checks_if_deterministic_quality_preset_produces_same_result_for_hypergraphs(self):
+    partitioner = self.HypergraphPartitioner(mtkahypar.PresetType.DETERMINISTIC_QUALITY, 8, 0.03, mtkahypar.Objective.KM1, False)
     partitioner.partition()
     objective_1 = partitioner.partitioned_hg.km1()
     partitioner.partition()
@@ -1071,6 +1121,20 @@ class MainTest(unittest.TestCase):
     partitioner.addFixedVertices()
     partitioner.partition()
     partitioner.improvePartition(1)
+
+  def test_partition_hypergraph_keeps_graph_alive(self):
+    context = mtk.context_from_preset(mtkahypar.PresetType.DEFAULT)
+    context.set_partitioning_parameters(2, 0.03, mtkahypar.Objective.KM1)
+    partitioned_hg = _make_partitioned_hg(context)
+    self.assertEqual(len(partitioned_hg.get_partition()), 7)
+
+  def test_map_onto_hypergraph(self):
+    context = mtk.context_from_preset(mtkahypar.PresetType.DEFAULT)
+    context.set_partitioning_parameters(8, 0.03, mtkahypar.Objective.KM1)
+    target_graph = mtk.target_graph_from_file(mydir + "/test_instances/target.graph", context)
+    partitioned_hg = _make_mapped_hg(context, target_graph)
+    self.assertGreater(len(partitioned_hg.get_partition()), 0)
+
 
 if __name__ == '__main__':
   unittest.main()

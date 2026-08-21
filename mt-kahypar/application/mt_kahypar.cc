@@ -26,12 +26,14 @@
  ******************************************************************************/
 
 #include <iostream>
+#include <chrono>
+#include <exception>
 
-#include "mt-kahypar/definitions.h"
 #include "mt-kahypar/io/command_line_options.h"
 #include "mt-kahypar/io/hypergraph_factory.h"
 #include "mt-kahypar/io/partitioning_output.h"
 #include "mt-kahypar/io/presets.h"
+#include "mt-kahypar/parallel/thread_management.h"
 #include "mt-kahypar/partition/partitioner_facade.h"
 #include "mt-kahypar/partition/registries/register_memory_pool.h"
 #include "mt-kahypar/partition/registries/registry.h"
@@ -44,20 +46,14 @@
 #include "mt-kahypar/utils/exception.h"
 
 using namespace mt_kahypar;
+using HighResClockTimepoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
 
-int main(int argc, char* argv[]) {
-
+int run(int argc, char* argv[]) {
   Context context(false);
-  processCommandLineInput(context, argc, argv, nullptr);
+  processCommandLineInput(context, argc, argv);
 
-  if ( context.partition.preset_file == "" ) {
-    if ( context.partition.preset_type != PresetType::UNDEFINED ) {
-      // Only a preset type specified => load according preset
-      auto preset_option_list = loadPreset(context.partition.preset_type);
-      processCommandLineInput(context, argc, argv, &preset_option_list);
-    } else {
-      throw InvalidInputException("No preset specified");
-    }
+  if ( context.partition.preset_type == PresetType::UNDEFINED ) {
+    ERR("No preset specified (--preset-type)");
   }
 
   // Determine instance (graph or hypergraph) and partition type
@@ -69,7 +65,7 @@ int main(int argc, char* argv[]) {
 
 
   context.utility_id = utils::Utilities::instance().registerNewUtilityObjects();
-  if (context.partition.verbose_output) {
+  if (context.partition.enable_logging) {
     io::printBanner();
   }
 
@@ -79,26 +75,24 @@ int main(int argc, char* argv[]) {
       context.shared_memory.shuffle_block_size);
   }
 
-  #ifndef KAHYPAR_DISABLE_HWLOC
-    size_t num_available_cpus = HardwareTopology::instance().num_cpus();
+  if constexpr (parallel::provides_hardware_information) {
+    size_t num_available_cpus = parallel::num_hardware_cpus();
     if ( num_available_cpus < context.shared_memory.num_threads ) {
-      WARNING("There are currently only" << num_available_cpus << "cpus available."
-        << "Setting number of threads from" << context.shared_memory.num_threads
-        << "to" << num_available_cpus);
+      WARNING("There are currently only " << num_available_cpus << " cpus available. "
+        << "Setting number of threads from " << context.shared_memory.num_threads
+        << " to " << num_available_cpus);
       context.shared_memory.num_threads = num_available_cpus;
     }
-  #endif
+  }
 
   // Initialize TBB task arenas on numa nodes
-  TBBInitializer::instance(context.shared_memory.num_threads);
+  parallel::initialize_tbb(context.shared_memory.num_threads);
 
-  #ifndef KAHYPAR_DISABLE_HWLOC
+  if constexpr (parallel::provides_hardware_information) {
     // We set the membind policy to interleaved allocations in order to
     // distribute allocations evenly across NUMA nodes
-    hwloc_cpuset_t cpuset = TBBInitializer::instance().used_cpuset();
-    parallel::HardwareTopology<>::instance().activate_interleaved_membind_policy(cpuset);
-    hwloc_bitmap_free(cpuset);
-  #endif
+    parallel::activate_interleaved_membind_policy();
+  }
 
   // Read Hypergraph
   utils::Timer& timer =
@@ -107,7 +101,8 @@ int main(int argc, char* argv[]) {
   mt_kahypar_hypergraph_t hypergraph = io::readInputFile(
       context.partition.graph_filename, context.partition.preset_type,
       context.partition.instance_type, context.partition.file_format,
-      context.preprocessing.stable_construction_of_incident_edges);
+      context.preprocessing.stable_construction_of_incident_edges,
+      /*remove_single_pin_hes=*/true, /*print_warnings=*/true);
   timer.stop_timer("io_hypergraph");
 
   // Read Target Graph
@@ -116,9 +111,10 @@ int main(int argc, char* argv[]) {
     if ( context.mapping.target_graph_file != "" ) {
       target_graph = std::make_unique<TargetGraph>(
         io::readInputFile<ds::StaticGraph>(
-          context.mapping.target_graph_file, FileFormat::Metis, true));
+          context.mapping.target_graph_file, FileFormat::Metis,
+          /*stable_construnction=*/true, /*remove_single_pin_hes=*/true, /*print_warnings=*/true));
     } else {
-      throw InvalidInputException("No target graph file specified (use -g <file> or --target-graph-file=<file>)!");
+      throw InvalidInputException("No target graph file specified (use -g <file> or --target-graph=<file>)!");
     }
   }
 
@@ -160,10 +156,32 @@ int main(int argc, char* argv[]) {
   }
 
   parallel::MemoryPool::instance().free_memory_chunks();
-  TBBInitializer::instance().terminate();
+  parallel::terminate_tbb();
 
   utils::delete_hypergraph(hypergraph);
   utils::delete_partitioned_hypergraph(partitioned_hypergraph);
 
   return 0;
+}
+
+int main(int argc, char* argv[]) {
+#ifdef NDEBUG
+  try {
+    return run(argc, argv);
+  } catch (const InvalidInputException& e) {
+    std::cerr << "\n " << e.what() << std::endl;
+    return 1;
+  } catch (const InvalidParameterException& e) {
+    std::cerr << "\n" << e.what() << std::endl;
+    return 1;
+  } catch (const UnsupportedOperationException& e) {
+    std::cerr << "\n" << e.what() << std::endl;
+    return 1;
+  } catch (const std::exception& e) {
+    std::cerr << "\n[FATAL ERROR] " << e.what() << std::endl;
+    return 1;
+  }
+#else
+  return run(argc, argv);
+#endif
 }

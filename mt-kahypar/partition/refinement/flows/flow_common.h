@@ -24,7 +24,9 @@
  * SOFTWARE.
  ******************************************************************************/
 
-#include "datastructure/flow_hypergraph_builder.h"
+#pragma once
+
+#include "WHFC/datastructure/flow_hypergraph.h"
 #include "mt-kahypar/datastructures/hypergraph_common.h"
 #include "mt-kahypar/parallel/stl/scalable_vector.h"
 
@@ -44,7 +46,7 @@ enum class MoveSequenceState : uint8_t {
 // apply the moves
 struct MoveSequence {
   vec<Move> moves;
-  Gain expected_improvement; // >= 0
+  Gain expected_improvement = 0; // >= 0
   MoveSequenceState state = MoveSequenceState::IN_PROGRESS;
 };
 

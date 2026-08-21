@@ -30,6 +30,7 @@
 #include <unordered_map>
 
 #include <tbb_kahypar/parallel_for.h>
+#include <tbb_kahypar/parallel_sort.h>
 
 #include "mt-kahypar/definitions.h"
 #include "mt-kahypar/partition/mapping/target_graph.h"
@@ -100,13 +101,24 @@ namespace {
 }
 
 template<typename TypeTraits>
-Subhypergraph ProblemConstruction<TypeTraits>::construct(const SearchID search_id,
-                                                         QuotientGraph<TypeTraits>& quotient_graph,
-                                                         const PartitionedHypergraph& phg) {
+Subhypergraph ProblemConstruction<TypeTraits>::construct(const BlockPair& blocks,
+                                                         QuotientGraph& quotient_graph,
+                                                         const PartitionedHypergraph& phg,
+                                                         bool deterministic) {
   Subhypergraph sub_hg;
+
+  auto& cut_hes = quotient_graph.edge(blocks).cut_hes;
+  if (deterministic) {
+    tbb_kahypar::parallel_sort(cut_hes.begin(), cut_hes.end());
+  } else {
+    std::shuffle(cut_hes.begin(), cut_hes.end(), utils::Randomize::instance().getGenerator());
+  }
+
+  // NOTE: the BFS initialzation must happen after cut_hes, otherwise tbb_kahypar::parallel_sort could
+  // interfere with the thread local variable (see "Work Isolation" in oneTBB Developer Guide)
   BFSData& bfs = _local_bfs.local();
   bfs.reset();
-  bfs.blocks = quotient_graph.getBlockPair(search_id);
+  bfs.blocks = blocks;
   sub_hg.block_0 = bfs.blocks.i;
   sub_hg.block_1 = bfs.blocks.j;
   sub_hg.weight_of_block_0 = 0;
@@ -118,14 +130,17 @@ Subhypergraph ProblemConstruction<TypeTraits>::construct(const SearchID search_i
     _scaling * _context.partition.perfect_balance_part_weights[sub_hg.block_0] - phg.partWeight(sub_hg.block_0);
   const size_t max_bfs_distance = _context.refinement.flows.max_bfs_distance;
 
-
   // We initialize the BFS with all cut hyperedges running
   // between the involved block associated with the search
   bfs.clearQueue();
-  quotient_graph.doForAllCutHyperedgesOfSearch(search_id, [&](const HyperedgeID& he) {
-    bfs.add_pins_of_hyperedge_to_queue(he, phg, max_bfs_distance,
-      max_weight_block_0, max_weight_block_1);
-  });
+  const size_t num_cut_hes = cut_hes.size();  // size() is expensive on concurrent_vector
+  for ( size_t i = 0; i < num_cut_hes; ++i ) {
+    const HyperedgeID he = cut_hes[i];
+    if ( phg.pinCountInPart(he, blocks.i) > 0 && phg.pinCountInPart(he, blocks.j) > 0 ) {
+      bfs.add_pins_of_hyperedge_to_queue(he, phg, max_bfs_distance,
+        max_weight_block_0, max_weight_block_1);
+    }
+  }
   bfs.swap_with_next_queue();
 
   // BFS
@@ -166,7 +181,7 @@ Subhypergraph ProblemConstruction<TypeTraits>::construct(const SearchID search_i
       bfs.swap_with_next_queue();
     }
   }
-  DBG << "Search ID:" << search_id << "-" << sub_hg;
+  DBG << V(blocks.i) << V(blocks.j) << "-" << sub_hg;
 
   // Check if all touched hyperedges are contained in subhypergraph
   ASSERT([&]() {

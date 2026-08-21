@@ -32,6 +32,7 @@
 
 #include <tbb_kahypar/enumerable_thread_specific.h>
 
+#include "mt-kahypar/datastructures/synchronized_edge_update.h"
 #include "mt-kahypar/partition/metrics.h"
 #include "mt-kahypar/partition/context.h"
 #include "mt-kahypar/utils/randomize.h"
@@ -47,6 +48,7 @@ class GainComputationBase {
  public:
   using RatingMap = ds::SparseMap<PartitionID, Gain>;
   using TmpScores = tbb_kahypar::enumerable_thread_specific<RatingMap>;
+  using Penalty = tbb_kahypar::enumerable_thread_specific<Gain>;
 
   GainComputationBase(const Context& context,
                       const bool disable_randomization) :
@@ -55,7 +57,8 @@ class GainComputationBase {
     _deltas(0),
     _tmp_scores([&] {
       return constructLocalTmpScores();
-    }) { }
+    }),
+    _isolated_block_gain(0) { }
 
   template<typename PartitionedHypergraph>
   Move computeMaxGainMove(const PartitionedHypergraph& phg,
@@ -65,8 +68,25 @@ class GainComputationBase {
                           const bool allow_imbalance = false) {
     Derived* derived = static_cast<Derived*>(this);
     RatingMap& tmp_scores = _tmp_scores.local();
-    Gain isolated_block_gain = 0;
+    Gain& isolated_block_gain = _isolated_block_gain.local();
     derived->precomputeGains(phg, hn, tmp_scores, isolated_block_gain, consider_non_adjacent_blocks);
+    Move best_move = computeMaxGainMoveForScores(phg, tmp_scores, isolated_block_gain, hn,
+                        rebalance, consider_non_adjacent_blocks, allow_imbalance);
+
+    isolated_block_gain = 0;
+    tmp_scores.clear();
+    return best_move;
+  }
+
+  template<typename PartitionedHypergraph>
+  Move computeMaxGainMoveForScores(const PartitionedHypergraph& phg,
+                                   const RatingMap& tmp_scores,
+                                   const Gain isolated_block_gain,
+                                   const HypernodeID hn,
+                                   const bool rebalance = false,
+                                   const bool consider_non_adjacent_blocks = false,
+                                   const bool allow_imbalance = false) {
+    Derived* derived = static_cast<Derived*>(this);
 
     PartitionID from = phg.partID(hn);
     Move best_move { from, from, hn, rebalance ? std::numeric_limits<Gain>::max() : 0 };
@@ -119,12 +139,16 @@ class GainComputationBase {
       }
     }
 
-    tmp_scores.clear();
     return best_move;
   }
 
   inline void computeDeltaForHyperedge(const SynchronizedEdgeUpdate& sync_update) {
     _deltas.local() += AttributedGains::gain(sync_update);
+  }
+
+  // ! Returns the local rating map for block scores
+  RatingMap& localScores() {
+    return _tmp_scores.local();
   }
 
   // ! Returns the delta in the objective function for all moves
@@ -170,6 +194,7 @@ private:
   const bool _disable_randomization;
   DeltaGain _deltas;
   TmpScores _tmp_scores;
+  Penalty _isolated_block_gain;
 };
 
 }  // namespace mt_kahypar

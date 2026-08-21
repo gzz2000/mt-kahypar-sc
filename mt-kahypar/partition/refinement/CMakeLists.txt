@@ -5,17 +5,21 @@ set(RefinementSources
         fm/global_rollback.cpp
         fm/sequential_twoway_fm_refiner.cpp
         label_propagation/label_propagation_refiner.cpp
-        rebalancing/simple_rebalancer.cpp
         rebalancing/advanced_rebalancer.cpp
+        rebalancing/deterministic_rebalancer.cpp
+        rebalancing/repair_empty_blocks.cpp
         deterministic/deterministic_label_propagation.cpp
-        flows/refiner_adapter.cpp
+        deterministic/deterministic_jet_refiner.cpp
         flows/problem_construction.cpp
-        flows/scheduler.cpp
+        flows/flow_refinement_scheduler.cpp
+        flows/active_block_scheduler.cpp
         flows/quotient_graph.cpp
         flows/flow_refiner.cpp
         flows/sequential_construction.cpp
         flows/parallel_construction.cpp
         flows/flow_hypergraph_builder.cpp
+        flows/deterministic/deterministic_flow_refinement_scheduler.cpp
+        flows/deterministic/participation_scheduler.cpp
         )
 
 set(Km1Sources

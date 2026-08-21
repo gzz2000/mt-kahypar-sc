@@ -36,7 +36,7 @@ namespace mt_kahypar {
 namespace {
 
 template<typename CommunicationHypergraph>
-MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE void swap(CommunicationHypergraph& communication_hg,
+MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE void vertex_swap(CommunicationHypergraph& communication_hg,
                                              const HypernodeID u,
                                              const HypernodeID v) {
   const PartitionID block_of_u = communication_hg.partID(u);
@@ -129,7 +129,8 @@ using PQ = std::priority_queue<PQElement>;
 
 template<typename CommunicationHypergraph>
 void KerninghanLin<CommunicationHypergraph>::improve(CommunicationHypergraph& communication_hg,
-                                                     const TargetGraph& target_graph) {
+                                                     const TargetGraph& target_graph,
+                                                     const Context& context) {
   ASSERT(communication_hg.initialNumNodes() == target_graph.graph().initialNumNodes());
 
   HyperedgeWeight current_objective = metrics::quality(communication_hg, Objective::steiner_tree, false);
@@ -145,8 +146,15 @@ void KerninghanLin<CommunicationHypergraph>::improve(CommunicationHypergraph& co
     // Initialize priority queue
     PQ pq;
     for ( const HypernodeID& u : communication_hg.nodes() ) {
+      if (communication_hg.isFixed(u)) continue;
+
       for ( const HypernodeID& v : communication_hg.nodes() ) {
-        if ( u < v ) {
+        if (communication_hg.isFixed(v)) continue;
+
+        bool weight_is_valid = !context.partition.use_individual_part_weights ||
+          (communication_hg.nodeWeight(u) <= context.partition.max_part_weights[communication_hg.partID(v)] &&
+           communication_hg.nodeWeight(v) <= context.partition.max_part_weights[communication_hg.partID(u)]);
+        if ( u < v && weight_is_valid ) {
           const HyperedgeWeight gain = swap_gain(communication_hg, target_graph, u, v, marked_hes);
           pq.push(PQElement { gain, std::make_pair(u, v) });
         }
@@ -182,7 +190,7 @@ void KerninghanLin<CommunicationHypergraph>::improve(CommunicationHypergraph& co
       }
 
       // Perform swap
-      swap(communication_hg, u, v);
+      vertex_swap(communication_hg, u, v);
       current_objective -= gain;
       performed_swaps.push_back(elem);
       already_moved[u] = true;
@@ -199,7 +207,7 @@ void KerninghanLin<CommunicationHypergraph>::improve(CommunicationHypergraph& co
     // Rollback to best seen solution
     for ( int i = performed_swaps.size() - 1; i >= best_idx; --i ) {
       const PQElement& elem = performed_swaps[i];
-      swap(communication_hg, elem.swap.first, elem.swap.second);
+      vertex_swap(communication_hg, elem.swap.first, elem.swap.second);
       current_objective += elem.gain;
     }
     ASSERT(current_objective == metrics::quality(communication_hg, Objective::steiner_tree));

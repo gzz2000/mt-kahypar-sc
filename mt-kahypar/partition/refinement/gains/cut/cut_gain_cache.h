@@ -30,6 +30,7 @@
 
 #include "mt-kahypar/partition/context_enum_classes.h"
 #include "mt-kahypar/datastructures/hypergraph_common.h"
+#include "mt-kahypar/datastructures/synchronized_edge_update.h"
 #include "mt-kahypar/datastructures/array.h"
 #include "mt-kahypar/datastructures/sparse_map.h"
 #include "mt-kahypar/parallel/atomic_wrapper.h"
@@ -58,7 +59,7 @@ class CutGainCache {
 
   static constexpr HyperedgeID HIGH_DEGREE_THRESHOLD = ID(100000);
 
-  using AdjacentBlocksIterator = IntegerRangeIterator<PartitionID>::const_iterator;
+  using AdjacentBlocksIterator = IntegerIterator<PartitionID>;
 
  public:
 
@@ -70,14 +71,14 @@ class CutGainCache {
   CutGainCache() :
     _is_initialized(false),
     _k(kInvalidPartition),
-    _gain_cache(),
-    _dummy_adjacent_blocks() { }
+    _current_k(kInvalidPartition),
+    _gain_cache() { }
 
   CutGainCache(const Context&) :
     _is_initialized(false),
     _k(kInvalidPartition),
-    _gain_cache(),
-    _dummy_adjacent_blocks() { }
+    _current_k(kInvalidPartition),
+    _gain_cache() { }
 
   CutGainCache(const CutGainCache&) = delete;
   CutGainCache & operator= (const CutGainCache &) = delete;
@@ -91,7 +92,7 @@ class CutGainCache {
     return _is_initialized;
   }
 
-  void reset(const bool run_parallel = true) {
+  void reset(HypernodeID /*num_nodes*/, const bool run_parallel = true) {
     unused(run_parallel);
     _is_initialized = false;
   }
@@ -119,8 +120,7 @@ class CutGainCache {
   IteratorRange<AdjacentBlocksIterator> adjacentBlocks(const HypernodeID) const {
     // We do not maintain the adjacent blocks of a node in this gain cache.
     // We therefore return an iterator over all blocks here
-    return IteratorRange<AdjacentBlocksIterator>(
-      _dummy_adjacent_blocks.cbegin(), _dummy_adjacent_blocks.cend());
+    return integer_range(_current_k);
   }
 
   // ####################### Gain Computation #######################
@@ -260,7 +260,7 @@ class CutGainCache {
 
   void changeNumberOfBlocks(const PartitionID new_k) {
     ASSERT(new_k <= _k);
-    _dummy_adjacent_blocks = IntegerRangeIterator<PartitionID>(new_k);
+    _current_k = new_k;
   }
 
   template<typename PartitionedHypergraph>
@@ -287,7 +287,7 @@ class CutGainCache {
                          const PartitionID k) {
     if (_gain_cache.size() == 0 && k != kInvalidPartition) {
       _k = k;
-      _dummy_adjacent_blocks = IntegerRangeIterator<PartitionID>(k);
+      _current_k = k;
       _gain_cache.resize(
         "Refinement", "gain_cache", num_nodes * size_t(_k + 1), true);
     }
@@ -321,12 +321,10 @@ class CutGainCache {
 
   // ! Number of blocks
   PartitionID _k;
+  PartitionID _current_k;
 
   // ! Array of size |V| * (k + 1), which stores the benefit and penalty terms of each node.
   ds::Array< CAtomic<HyperedgeWeight> > _gain_cache;
-
-  // ! Provides an iterator from 0 to k (:= number of blocks)
-  IntegerRangeIterator<PartitionID> _dummy_adjacent_blocks;
 };
 
 /**

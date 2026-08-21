@@ -38,6 +38,7 @@
 #include "mt-kahypar/datastructures/hypergraph_common.h"
 #include "mt-kahypar/datastructures/connectivity_info.h"
 #include "mt-kahypar/datastructures/streaming_vector.h"
+#include "mt-kahypar/datastructures/synchronized_edge_update.h"
 #include "mt-kahypar/parallel/atomic_wrapper.h"
 #include "mt-kahypar/parallel/stl/scalable_vector.h"
 #include "mt-kahypar/parallel/stl/thread_locals.h"
@@ -187,6 +188,11 @@ class PartitionedHypergraph {
   // ! Number of removed hypernodes
   HypernodeID numRemovedHypernodes() const {
     return _hg->numRemovedHypernodes();
+  }
+
+  // ! Max weight of removed degree zero vertex
+  HypernodeWeight maxWeightOfRemovedDegreeZeroNode() const {
+    return _hg->maxWeightOfRemovedDegreeZeroNode();
   }
 
   // ! Initial number of hyperedges
@@ -349,7 +355,7 @@ class PartitionedHypergraph {
   // ####################### Hyperedge Information #######################
 
   // ! Weight of a hyperedge
-  HypernodeWeight edgeWeight(const HyperedgeID e) const {
+  HyperedgeWeight edgeWeight(const HyperedgeID e) const {
     return _hg->edgeWeight(e);
   }
 
@@ -475,6 +481,19 @@ class PartitionedHypergraph {
     }
   }
 
+  /*!
+   * Restores a single pin hyperedge previously removed from the hypergraph.
+   */
+  void restoreSinglePinEdge(const HyperedgeID& he) {
+    _hg->restoreEdge(he);
+    ASSERT(edgeSize(he) == 1);  // trying to get the size before restoring triggers another assertion
+
+    const HypernodeID pin = _hg->_incidence_array[_hg->hyperedge(he).firstEntry()];
+    const PartitionID block = partID(pin);
+    _con_info.setPinCountInPart(he, block, 1);
+    _con_info.addBlock(he, block);
+  }
+
   /**
    * Restores a previously removed set of singple-pin and parallel hyperedges. Note, that hes_to_restore
    * must be exactly the same and given in the reverse order as returned by removeSinglePinAndParallelNets(...).
@@ -572,6 +591,7 @@ class PartitionedHypergraph {
   // ! Changes the block id of vertex u from block 'from' to block 'to'
   // ! Returns true, if move of vertex u to corresponding block succeeds.
   template<typename SuccessFunc>
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
   bool changeNodePart(const HypernodeID u,
                       PartitionID from,
                       PartitionID to,
@@ -606,17 +626,38 @@ class PartitionedHypergraph {
   }
 
   // curry
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
+  bool changeNodePartNoSync(const HypernodeID u,
+                            PartitionID from,
+                            PartitionID to,
+                            const bool force_moving_fixed_vertex = false) {
+    return changeNodePart(u, from, to,
+      std::numeric_limits<HypernodeWeight>::max(), []{},
+        NOOP_FUNC, NOOP_NOTIFY_FUNC, force_moving_fixed_vertex);
+  }
+
+  template<typename SuccessFunc>
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
+  bool changeNodePartNoSync(const HypernodeID u,
+                            PartitionID from,
+                            PartitionID to,
+                            HypernodeWeight max_weight_to,
+                            SuccessFunc&& report_success) {
+    return changeNodePart(u, from, to,
+      max_weight_to, report_success, NOOP_FUNC, NOOP_NOTIFY_FUNC);
+  }
+
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
   bool changeNodePart(const HypernodeID u,
                       PartitionID from,
                       PartitionID to,
-                      const DeltaFunction& delta_func = NOOP_FUNC,
-                      const bool force_moving_fixed_vertex = false) {
+                      const DeltaFunction& delta_func) {
     return changeNodePart(u, from, to,
-      std::numeric_limits<HypernodeWeight>::max(), []{},
-        delta_func, NOOP_NOTIFY_FUNC, force_moving_fixed_vertex);
+      std::numeric_limits<HypernodeWeight>::max(), []{}, delta_func, NOOP_NOTIFY_FUNC);
   }
 
   template<typename GainCache, typename SuccessFunc>
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
   bool changeNodePart(GainCache& gain_cache,
                       const HypernodeID u,
                       PartitionID from,
@@ -640,7 +681,17 @@ class PartitionedHypergraph {
     }
   }
 
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
+  bool changeNodePart(const HypernodeID u,
+                            PartitionID from,
+                            PartitionID to) {
+    return changeNodePart(u, from, to,
+      std::numeric_limits<HypernodeWeight>::max(), []{},
+        NOOP_FUNC, NOOP_NOTIFY_FUNC, false);
+  }
+
   template<typename GainCache>
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
   bool changeNodePart(GainCache& gain_cache,
                       const HypernodeID u,
                       PartitionID from,
@@ -712,6 +763,22 @@ class PartitionedHypergraph {
     return _con_info;
   }
 
+  // ! Creates a SynchronizedEdgeUpdate for the hyperedge. The caller must ensure that there is no concurrent access
+  // ! which modifies connectivity set of the hyperedge.
+  MT_KAHYPAR_ATTRIBUTE_ALWAYS_INLINE
+  SynchronizedEdgeUpdate createEdgeUpdate(const HyperedgeID he) {
+    SynchronizedEdgeUpdate sync_update;
+    ASSERT(he < _pin_count_update_ownership.size());
+    sync_update.he = he;
+    sync_update.edge_weight = edgeWeight(he);
+    sync_update.edge_size = edgeSize(he);
+    sync_update.target_graph = _target_graph;
+    sync_update.edge_locks = &_pin_count_update_ownership;
+    sync_update.connectivity_set_after = hasTargetGraph() ? &deepCopyOfConnectivitySet(he) : nullptr;
+    sync_update.pin_counts_after = &_con_info.pinCountSnapshot(he);
+    return sync_update;
+  }
+
   // ! Initializes the partition of the hypergraph, if block ids are assigned with
   // ! setOnlyNodePart(...). In that case, block weights and pin counts in part for
   // ! each hyperedge must be initialized explicitly here.
@@ -729,6 +796,11 @@ class PartitionedHypergraph {
 
     // Reset pin count in part and connectivity set
     _con_info.reset(false);
+  }
+
+  // ! Reset synchronization. Necessary after changeNodePartNoSync (not thread-safe)
+  void resetEdgeSynchronization() {
+    // nothing to do here
   }
 
   // ! Only for testing

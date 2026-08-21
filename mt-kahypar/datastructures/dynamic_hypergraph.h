@@ -118,11 +118,11 @@ class DynamicHypergraph {
       _valid = false;
     }
 
-    HyperedgeWeight weight() const {
+    HypernodeWeight weight() const {
       return _weight;
     }
 
-    void setWeight(HyperedgeWeight weight) {
+    void setWeight(HypernodeWeight weight) {
       ASSERT(!isDisabled());
       _weight = weight;
     }
@@ -146,7 +146,7 @@ class DynamicHypergraph {
 
    private:
     // ! Hypernode weight
-    HyperedgeWeight _weight;
+    HypernodeWeight _weight;
     // ! Community id
     PartitionID _community_id;
     // ! Index of the uncontraction batch in which this hypernode is contained in
@@ -412,7 +412,7 @@ class DynamicHypergraph {
   explicit DynamicHypergraph() :
     _num_hypernodes(0),
     _num_removed_hypernodes(0),
-    _removed_degree_zero_hn_weight(0),
+    _max_removed_degree_zero_hn_weight(0),
     _num_hyperedges(0),
     _num_removed_hyperedges(0),
     _max_edge_size(0),
@@ -440,7 +440,7 @@ class DynamicHypergraph {
   DynamicHypergraph(DynamicHypergraph&& other) :
     _num_hypernodes(other._num_hypernodes),
     _num_removed_hypernodes(other._num_removed_hypernodes),
-    _removed_degree_zero_hn_weight(other._removed_degree_zero_hn_weight),
+    _max_removed_degree_zero_hn_weight(other._max_removed_degree_zero_hn_weight),
     _num_hyperedges(other._num_hyperedges),
     _num_removed_hyperedges(other._num_removed_hyperedges),
     _max_edge_size(other._max_edge_size),
@@ -467,9 +467,9 @@ class DynamicHypergraph {
   DynamicHypergraph & operator= (DynamicHypergraph&& other) {
     _num_hypernodes = other._num_hypernodes;
     _num_removed_hypernodes = other._num_removed_hypernodes;
+    _max_removed_degree_zero_hn_weight = other._max_removed_degree_zero_hn_weight;
     _num_hyperedges = other._num_hyperedges;
     _num_removed_hyperedges = other._num_removed_hyperedges;
-    _removed_degree_zero_hn_weight = other._removed_degree_zero_hn_weight;
     _max_edge_size = other._max_edge_size;
     _num_pins = other._num_pins;
     _total_degree = other._total_degree;
@@ -508,9 +508,9 @@ class DynamicHypergraph {
     return _num_removed_hypernodes;
   }
 
-  // ! Weight of removed degree zero vertics
-  HypernodeWeight weightOfRemovedDegreeZeroVertices() const {
-    return _removed_degree_zero_hn_weight;
+  // ! Max weight of removed degree zero vertex
+  HypernodeWeight maxWeightOfRemovedDegreeZeroNode() const {
+    return _max_removed_degree_zero_hn_weight;
   }
 
   // ! Initial number of hyperedges
@@ -543,11 +543,8 @@ class DynamicHypergraph {
     return _total_weight;
   }
 
-  // ! Recomputes the total weight of the hypergraph (parallel)
-  void updateTotalWeight(parallel_tag_t);
-
-  // ! Recomputes the total weight of the hypergraph (sequential)
-  void updateTotalWeight();
+  // ! Computes the total node weight of the hypergraph
+  void computeAndSetTotalNodeWeight(parallel_tag_t);
 
   // ####################### Iterators #######################
 
@@ -661,20 +658,21 @@ class DynamicHypergraph {
   void removeDegreeZeroHypernode(const HypernodeID u) {
     ASSERT(nodeDegree(u) == 0);
     removeHypernode(u);
-    _removed_degree_zero_hn_weight += nodeWeight(u);
+    _max_removed_degree_zero_hn_weight =
+      std::max(_max_removed_degree_zero_hn_weight, nodeWeight(u));
   }
 
   // ! Restores a degree zero hypernode
   void restoreDegreeZeroHypernode(const HypernodeID u) {
     hypernode(u).enable();
     ASSERT(nodeDegree(u) == 0);
-    _removed_degree_zero_hn_weight -= nodeWeight(u);
+    _max_removed_degree_zero_hn_weight = 0;
   }
 
   // ####################### Hyperedge Information #######################
 
   // ! Weight of a hyperedge
-  HypernodeWeight edgeWeight(const HyperedgeID e) const {
+  HyperedgeWeight edgeWeight(const HyperedgeID e) const {
     ASSERT(!hyperedge(e).isDisabled(), "Hyperedge" << e << "is disabled");
     return hyperedge(e).weight();
   }
@@ -869,6 +867,17 @@ class DynamicHypergraph {
     }
     ++_num_removed_hyperedges;
     disableHyperedge(he);
+  }
+
+  /*!
+   * Restores a hyperedge previously removed from the hypergraph.
+   */
+  void restoreEdge(const HyperedgeID he) {
+    ASSERT(!edgeIsEnabled(he), "Hyperedge" << he << "is enabled");
+    enableHyperedge(he);
+    for ( const HypernodeID& pin : pins(he) ) {
+      _incident_nets.restoreIncidentNets(pin);
+    }
   }
 
   /*!
@@ -1114,8 +1123,8 @@ class DynamicHypergraph {
   HypernodeID _num_hypernodes;
   // ! Number of removed hypernodes
   HypernodeID _num_removed_hypernodes;
-  // ! Number of removed degree zero hypernodes
-  HypernodeWeight _removed_degree_zero_hn_weight;
+  // ! Maximum weight of all removed degree zero nodes
+  HypernodeWeight _max_removed_degree_zero_hn_weight;
   // ! Number of hyperedges
   HyperedgeID _num_hyperedges;
   // ! Number of removed hyperedges

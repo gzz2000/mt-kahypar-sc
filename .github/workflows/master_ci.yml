@@ -27,8 +27,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install libhwloc-dev lcov gcovr ${{ matrix.compiler.install_cmd }}
+          sudo apt-get update && sudo apt-get install libhwloc-dev lcov gcovr ${{ matrix.compiler.install_cmd }}
 
       - name: Install Mt-KaHyPar
         env:
@@ -53,8 +52,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install libhwloc-dev libudev-dev
+          sudo apt-get update && sudo apt-get install libhwloc-dev libudev-dev
 
       - name: Install Mt-KaHyPar
         run: |
@@ -67,10 +65,25 @@ jobs:
             echo "Error: hwloc is dynamically linked"
             exit 1
           fi
-          if [[ $(ldd mt-kahypar/application/MtKaHyPar | grep boost) ]]; then
-            echo "Error: boost is dynamically linked"
-            exit 1
-          fi
+  mt_kahypar_build_minimal_depencies:
+    name: Build With Minimal Dependencies
+    runs-on: ubuntu-24.04
+    env:
+      CI_ACTIVE : 1
+
+    steps:
+      - name: Checkout HEAD
+        uses: actions/checkout@v4
+
+      - name: Install Mt-KaHyPar
+        run: |
+          rm -rf build
+          mkdir build
+          cd build
+          cmake .. --preset=default -DKAHYPAR_CI_BUILD=ON -DKAHYPAR_DISABLE_HWLOC=ON -DKAHYPAR_DISABLE_GROWT=ON -DKAHYPAR_DISABLE_PARLAY=ON -DKAHYPAR_PYTHON=ON
+          make -j2 MtKaHyPar
+          make -j2 mtkahypar
+          make -j2 mtkahypar_python
 
   mt_kahypar_test_suite:
     name: Test Suite
@@ -84,8 +97,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install libhwloc-dev lcov gcovr
+          sudo apt-get update && sudo apt-get install libhwloc-dev lcov gcovr
 
       - name: Install Mt-KaHyPar Test Suite
         run: |
@@ -103,8 +115,8 @@ jobs:
       - name: Report Code Coverage
         run: |
           cd build
-          lcov --directory . --capture --output-file coverage.info --exclude '**/external_tools/**/*' --exclude '**/tests/**/*' --exclude '**/googletest-src/**/*'
-          lcov --remove coverage.info '/usr/**/*' '**/external_tools/**/*' '**/tests/**/*' --output-file coverage.info
+          lcov --directory . --capture --output-file coverage.info --exclude '**/external_tools/**/*' --exclude '**/tests/**/*' --exclude '**/googletest-src/**/*' --exclude '**/_deps/**/*'
+          lcov --remove coverage.info '/usr/**/*' '**/external_tools/**/*' '**/tests/**/*' '**/_deps/**/*' --output-file coverage.info
           lcov --list coverage.info
           gcovr -r ../ -x > report.xml
           cd ..
@@ -122,8 +134,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install libhwloc-dev lcov gcovr
+          sudo apt-get update && sudo apt-get install libhwloc-dev lcov gcovr
 
       - name: Install Mt-KaHyPar Integration Tests
         run: |
@@ -152,8 +163,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install libhwloc-dev lcov gcovr
+          sudo apt-get update && sudo apt-get install libhwloc-dev lcov gcovr
 
       - name: Run Mt-KaHyPar C Library Interface Tests
         run: |
@@ -175,8 +185,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install libhwloc-dev lcov gcovr
+          sudo apt-get update && sudo apt-get install libhwloc-dev lcov gcovr
 
       - name: Build Mt-KaHyPar Python Interface
         run: |
@@ -207,7 +216,7 @@ jobs:
         with:
           install: git make
 
-      - name: Install CMake and GCC
+      - name: Install CMake, GCC, and hwloc
         shell: msys2 {0}
         run: |
           pacman --noconfirm -S mingw-w64-x86_64-hwloc mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc

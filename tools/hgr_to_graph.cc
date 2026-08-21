@@ -24,12 +24,12 @@
  * SOFTWARE.
  ******************************************************************************/
 
-#include <boost_kahypar/program_options.hpp>
-
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <algorithm>
+
+#include <CLI/CLI.hpp>
 
 #include "mt-kahypar/macros.h"
 #include "mt-kahypar/definitions.h"
@@ -37,24 +37,24 @@
 #include "mt-kahypar/io/hypergraph_io.h"
 
 using namespace mt_kahypar;
-namespace po = boost_kahypar::program_options;
 
 int main(int argc, char* argv[]) {
   std::string graph_filename;
   std::string hgr_filename;
 
-  po::options_description options("Options");
-  options.add_options()
-    ("hypergraph,h",
-    po::value<std::string>(&hgr_filename)->value_name("<string>")->required(),
-    "Hypergraph filename")
-    ("graph,g",
-    po::value<std::string>(&graph_filename)->value_name("<string>")->required(),
-    "Graph filename");
-
-  po::variables_map cmd_vm;
-  po::store(po::parse_command_line(argc, argv, options), cmd_vm);
-  po::notify(cmd_vm);
+  CLI::App app;
+  app.set_help_flag("--help");
+  app.add_option(
+    "-h,--hypergraph,hypergraph",
+    hgr_filename,
+    "Hypergraph filename"
+  )->required()->check(CLI::ExistingFile);
+  app.add_option(
+    "-g,--graph,graph",
+    graph_filename,
+    "Graph filename"
+  )->required();
+  CLI11_PARSE(app, argc, argv);
 
   std::ofstream out_stream(graph_filename.c_str());
 
@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
   vec<HypernodeWeight> hypernodes_weight;
 
   io::readHypergraphFile(hgr_filename, num_edges, num_nodes, num_removed_single_pin_hyperedges,
-                         hyperedges, hyperedges_weight, hypernodes_weight);
+                         hyperedges, hyperedges_weight, hypernodes_weight, true, true);
   ALWAYS_ASSERT(hyperedges.size() == num_edges);
   ALWAYS_ASSERT(num_removed_single_pin_hyperedges == 0);
 

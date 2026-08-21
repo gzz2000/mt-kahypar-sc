@@ -29,8 +29,6 @@
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 
-#include <boost_kahypar/range/irange.hpp>
-
 #include <tbb_kahypar/parallel_for.h>
 
 #include <atomic>
@@ -55,6 +53,8 @@
 #include "mt-kahypar/utils/cast.h"
 #include "mt-kahypar/utils/delete.h"
 #include "mt-kahypar/utils/exception.h"
+#include "mt-kahypar/utils/randomize.h"
+#include "mt-kahypar/utils/range.h"
 
 
 namespace py = pybind11;
@@ -139,6 +139,7 @@ PYBIND11_MODULE(mtkahypar, m) {
   using mt_kahypar::PresetType;
   py::enum_<PresetType>(m, "PresetType", py::module_local())
     .value("DETERMINISTIC", PresetType::deterministic)
+    .value("DETERMINISTIC_QUALITY", PresetType::deterministic_quality)
     .value("LARGE_K", PresetType::large_k)
     .value("DEFAULT", PresetType::default_preset)
     .value("QUALITY", PresetType::quality)
@@ -338,7 +339,7 @@ Construct a target graph.
         unused(context);
         return mt_kahypar_py_target_graph_t{
           reinterpret_cast<mt_kahypar_hypergraph_s*>(new ds::StaticGraph(
-            io::readInputFile<ds::StaticGraph>(file_name, file_format, true))),
+            io::readInputFile<ds::StaticGraph>(file_name, file_format, true, true, context.partition.enable_logging))),
             STATIC_GRAPH };
       }, "Reads a target graph from a file (supported file formats are METIS and HMETIS)",
       py::arg("filename"), py::arg("context"), py::arg("format") = FileFormat::Metis);
@@ -398,10 +399,16 @@ Construct a target graph.
       }, "Sets the number of V-cycles")
     .def_property("logging",
       [](const Context& context) {
-        return context.partition.verbose_output;
-      }, [](Context& context, const bool verbose_output) {
-        context.partition.verbose_output = verbose_output;
+        return context.partition.enable_logging;
+      }, [](Context& context, const bool enable_logging) {
+        context.partition.enable_logging = enable_logging;
       }, "Enable partitioning output")
+    .def_property("verbose_logging",
+      [](const Context& context) {
+        return context.partition.verbose_logging;
+      }, [](Context& context, const bool verbose_logging) {
+        context.partition.verbose_logging = verbose_logging;
+      }, "Use verbose partitioning output")
     .def("set_individual_target_block_weights",
       [](Context& context, std::vector<HypernodeWeight>& block_weights) {
         if (static_cast<PartitionID>(block_weights.size()) != context.partition.k) {
@@ -513,7 +520,7 @@ corresponding node or -1 if the node is not fixed.
       [&](mt_kahypar_hypergraph_t hypergraph, const Context& context) {
         return lib::partition(hypergraph, context);
       }, "Partitions the hypergraph with the parameters given in the partitioning context",
-      py::arg("context"))
+      py::arg("context"), py::keep_alive<0, 1>())
     .def("map_onto_graph",
       [&](mt_kahypar_hypergraph_t hypergraph, mt_kahypar_py_target_graph_t graph, const Context& context) {
         TargetGraph target_graph(target_graph_cast(graph).copy());
@@ -527,7 +534,7 @@ corresponding node or -1 if the node is not fixed.
   that spans a subset of the nodes (in our case the hyperedges) on the target graph. This objective function
   is able to acurately model wire-lengths in VLSI design or communication costs in a distributed system where some
   processors do not communicate directly with each other or different speeds.
-          )pbdoc", py::arg("target_graph"), py::arg("context"))
+          )pbdoc", py::arg("target_graph"), py::arg("context"), py::keep_alive<0, 1>())
   .def("create_partitioned_hypergraph",
     [&](mt_kahypar_hypergraph_t hypergraph,
         const Context& context,
@@ -610,9 +617,8 @@ Construct a partitioned hypergraph from this hypergraph.
     .def("blocks",
       [&](mt_kahypar_partitioned_hypergraph_t p) {
         return lib::switch_phg<py::iterator, true>(p, [=](const auto& phg) {
-          return py::make_iterator(
-            boost_kahypar::range_detail::integer_iterator<PartitionID>(0),
-            boost_kahypar::range_detail::integer_iterator<PartitionID>(phg.k()));
+          auto range = integer_range(phg.k());
+          return py::make_iterator(range.begin(), range.end());
         });
       }, "Iterator over blocks of the partition", py::keep_alive<0, 1>())
     .def("is_fixed",

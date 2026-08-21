@@ -26,6 +26,8 @@
 
 #pragma once
 
+#include <chrono>
+#include <limits>
 #include <string>
 #include <sstream>
 #include <type_traits>
@@ -33,6 +35,8 @@
 #include "mtkahypartypes.h"
 
 #include "mt-kahypar/definitions.h"
+#include "mt-kahypar/macros.h"
+#include "mt-kahypar/parallel/thread_management.h"
 #include "mt-kahypar/partition/context.h"
 #include "mt-kahypar/partition/conversion.h"
 #include "mt-kahypar/partition/partitioner_facade.h"
@@ -42,7 +46,9 @@
 #include "mt-kahypar/io/hypergraph_factory.h"
 #include "mt-kahypar/io/hypergraph_io.h"
 #include "mt-kahypar/utils/cast.h"
+#include "mt-kahypar/utils/deduplicate.h"
 #include "mt-kahypar/utils/exception.h"
+#include "mt-kahypar/utils/utilities.h"
 #include "mt-kahypar/io/command_line_options.h"
 #include "mt-kahypar/io/presets.h"
 
@@ -71,32 +77,27 @@ namespace lib {
 
 void initialize(const size_t num_threads, const bool interleaved_allocations, const bool print_warnings) {
   size_t P = num_threads;
-  (void)print_warnings;  // avoid warning without hwloc
-  #ifndef KAHYPAR_DISABLE_HWLOC
-    size_t num_available_cpus = HardwareTopology::instance().num_cpus();
+  if constexpr (parallel::provides_hardware_information) {
+    size_t num_available_cpus = parallel::num_hardware_cpus();
     if ( num_available_cpus < num_threads ) {
       P = num_available_cpus;
       if (print_warnings) {
-        WARNING("There are currently only" << num_available_cpus << "cpus available."
-          << "Setting number of threads from" << num_threads << "to" << num_available_cpus);
+        WARNING("There are currently only " << num_available_cpus << " cpus available. "
+          << "Setting number of threads from " << num_threads << " to " << num_available_cpus);
       }
     }
-  #endif
+  }
 
   // Initialize TBB task arenas on numa nodes
-  TBBInitializer::instance(P);
+  parallel::initialize_tbb(P);
 
-  #ifndef KAHYPAR_DISABLE_HWLOC
+  if constexpr (parallel::provides_hardware_information) {
     if ( interleaved_allocations ) {
       // We set the membind policy to interleaved allocations in order to
       // distribute allocations evenly across NUMA nodes
-      hwloc_cpuset_t cpuset = TBBInitializer::instance().used_cpuset();
-      parallel::HardwareTopology<>::instance().activate_interleaved_membind_policy(cpuset);
-      hwloc_bitmap_free(cpuset);
+      parallel::activate_interleaved_membind_policy();
     }
-  #else
-    unused(interleaved_allocations);
-  #endif
+  }
 
   register_algorithms_and_policies();
 }
@@ -106,6 +107,7 @@ bool is_compatible(mt_kahypar_hypergraph_t hypergraph, mt_kahypar_preset_type_t 
     case DEFAULT:
     case QUALITY:
     case DETERMINISTIC:
+    case DETERMINISTIC_QUALITY:
     case LARGE_K:
       return hypergraph.type == STATIC_GRAPH || hypergraph.type == STATIC_HYPERGRAPH;
     case HIGHEST_QUALITY:
@@ -119,6 +121,7 @@ bool is_compatible(mt_kahypar_partitioned_hypergraph_t partitioned_hg, mt_kahypa
     case DEFAULT:
     case QUALITY:
     case DETERMINISTIC:
+    case DETERMINISTIC_QUALITY:
       return partitioned_hg.type == MULTILEVEL_GRAPH_PARTITIONING ||
              partitioned_hg.type == MULTILEVEL_HYPERGRAPH_PARTITIONING;
     case LARGE_K:
@@ -131,12 +134,23 @@ bool is_compatible(mt_kahypar_partitioned_hypergraph_t partitioned_hg, mt_kahypa
   return false;
 }
 
+template<typename OutType, typename InType>
+void check_overflow(const InType& value, const char* what) {
+  if (value > static_cast<InType>(std::numeric_limits<OutType>::max())) {
+    std::string msg = std::string(what) + " overflows input range of internal data type: " + STR(value);
+    if constexpr (sizeof(OutType) < 8) {
+      msg += " (build with -DKAHYPAR_USE_64_BIT_IDS=ON to support larger ID ranges)";
+    }
+    throw InvalidInputException(msg);
+  }
+}
+
 void check_if_all_relevant_parameters_are_set(Context& context) {
   bool success = true;
   auto check_parameter = [&](bool is_uninitialized, const char* warning_msg) {
     if (is_uninitialized) {
       success = false;
-      if (context.partition.verbose_output) {
+      if (context.partition.enable_logging) {
         WARNING(warning_msg);
       }
     }
@@ -159,14 +173,13 @@ Context context_from_file(const char* ini_file_name) {
 
 Context context_from_preset(PresetType preset) {
   Context context(false);
-  auto preset_option_list = loadPreset(preset);
-  presetToContext(context, preset_option_list, true);
+  presetToContext(context, preset, true);
   return context;
 }
 
 void prepare_context(Context& context) {
-  context.shared_memory.original_num_threads = mt_kahypar::TBBInitializer::instance().total_number_of_threads();
-  context.shared_memory.num_threads = mt_kahypar::TBBInitializer::instance().total_number_of_threads();
+  context.shared_memory.original_num_threads = parallel::total_number_of_threads();
+  context.shared_memory.num_threads = parallel::total_number_of_threads();
   context.utility_id = mt_kahypar::utils::Utilities::instance().registerNewUtilityObjects();
 
   context.partition.perfect_balance_part_weights.clear();
@@ -210,6 +223,7 @@ mt_kahypar_preset_type_t get_preset_c_type(const PresetType preset) {
     case PresetType::quality: return QUALITY;
     case PresetType::highest_quality: return HIGHEST_QUALITY;
     case PresetType::deterministic: return DETERMINISTIC;
+    case PresetType::deterministic_quality: return DETERMINISTIC_QUALITY;
     case PresetType::large_k: return LARGE_K;
     case PresetType::UNDEFINED: return DEFAULT;
   }
@@ -222,7 +236,7 @@ std::string incompatibility_description(mt_kahypar_hypergraph_t hypergraph) {
     case STATIC_GRAPH:
       ss << "The hypergraph uses the static graph data structure which can be only used "
          << "in combination with the following presets: "
-         << "DEFAULT, QUALITY, DETERMINISTIC and LARGE_K"; break;
+         << "DEFAULT, QUALITY, DETERMINISTIC, DETERMINISTIC_QUALITY and LARGE_K"; break;
     case DYNAMIC_GRAPH:
       ss << "The hypergraph uses the dynamic graph data structure which can be only used "
          << "in combination with the following preset: "
@@ -230,7 +244,7 @@ std::string incompatibility_description(mt_kahypar_hypergraph_t hypergraph) {
     case STATIC_HYPERGRAPH:
       ss << "The hypergraph uses the static hypergraph data structure which can be only used "
          << "in combination with the following presets: "
-         << "DEFAULT, QUALITY, DETERMINISTIC and LARGE_K"; break;
+         << "DEFAULT, QUALITY, DETERMINISTIC, DETERMINISTIC_QUALITY and LARGE_K"; break;
     case DYNAMIC_HYPERGRAPH:
       ss << "The hypergraph uses the dynamic hypergraph data structure which can be only used "
          << "in combination with the following preset: "
@@ -255,7 +269,7 @@ std::string incompatibility_description(mt_kahypar_partitioned_hypergraph_t part
     case MULTILEVEL_GRAPH_PARTITIONING:
       ss << "The partitioned hypergraph uses the data structures for multilevel graph partitioning "
          << "which can be only used in combination with the following presets: "
-         << "DEFAULT, QUALITY, DETERMINISTIC, and LARGE_K"; break;
+         << "DEFAULT, QUALITY, DETERMINISTIC, DETERMINISTIC_QUALITY, and LARGE_K"; break;
     case N_LEVEL_GRAPH_PARTITIONING:
       ss << "The partitioned hypergraph uses the data structures for n-level graph partitioning "
          << "which can be only used in combination with the following preset: "
@@ -263,7 +277,7 @@ std::string incompatibility_description(mt_kahypar_partitioned_hypergraph_t part
     case MULTILEVEL_HYPERGRAPH_PARTITIONING:
       ss << "The partitioned hypergraph uses the data structures for multilevel hypergraph partitioning "
          << "which can be only used in combination with the following presets: "
-         << "DEFAULT, QUALITY, and DETERMINISTIC"; break;
+         << "DEFAULT, QUALITY, and DETERMINISTIC, DETERMINISTIC_QUALITY"; break;
     case N_LEVEL_HYPERGRAPH_PARTITIONING:
       ss << "The partitioned hypergraph uses the data structures for n-level hypergraph partitioning "
          << "which can be only used in combination with the following preset: "
@@ -290,7 +304,8 @@ mt_kahypar_hypergraph_t hypergraph_from_file(const std::string& file_name,
                                              const Context& context,
                                              const InstanceType instance_type,
                                              const FileFormat file_format) {
-  return io::readInputFile(file_name, context.partition.preset_type, instance_type, file_format, true);
+  return io::readInputFile(file_name, context.partition.preset_type, instance_type, file_format,
+                           /*stable_construnction=*/true, /*remove_single_pin_hes=*/true, context.partition.enable_logging);
 }
 
 mt_kahypar_hypergraph_t create_hypergraph(const Context& context,
@@ -299,8 +314,12 @@ mt_kahypar_hypergraph_t create_hypergraph(const Context& context,
                                           const vec<vec<HypernodeID>>& edge_vector,
                                           const mt_kahypar_hyperedge_weight_t* hyperedge_weights,
                                           const mt_kahypar_hypernode_weight_t* vertex_weights) {
+  check_overflow<HypernodeID>(num_vertices, "number of vertices");
+  check_overflow<HyperedgeID>(num_hyperedges, "number of hyperedges");
+
   switch ( context.partition.preset_type ) {
     case PresetType::deterministic:
+    case PresetType::deterministic_quality:
     case PresetType::large_k:
     case PresetType::default_preset:
     case PresetType::quality:
@@ -319,14 +338,61 @@ mt_kahypar_hypergraph_t create_hypergraph(const Context& context,
   throw InvalidParameterException("Invalid preset type.");
 }
 
+mt_kahypar_hypergraph_t create_hypergraph_from_adjacency_array(const Context& context,
+                                                               const mt_kahypar_hypernode_id_t num_vertices,
+                                                               const mt_kahypar_hyperedge_id_t num_hyperedges,
+                                                               const size_t* hyperedge_indices,
+                                                               const mt_kahypar_hypernode_id_t* hyperedges,
+                                                               const mt_kahypar_hyperedge_weight_t* hyperedge_weights,
+                                                               const mt_kahypar_hypernode_weight_t* vertex_weights) {
+  check_overflow<HypernodeID>(num_vertices, "number of vertices");
+  check_overflow<HyperedgeID>(num_hyperedges, "number of hyperedges");
+  if (hyperedge_indices[0] != 0) {
+    throw InvalidInputException("First entry in hyperedge indices must be 0, but is: " + STR(hyperedge_indices[0]));
+  }
+
+  // Transform adjacence array into adjacency list
+  size_t num_duplicated_pins = 0;
+  size_t num_hes_with_duplicated_pins = 0;
+  vec<vec<HypernodeID>> edge_vector(num_hyperedges);
+  tbb_kahypar::parallel_for<HyperedgeID>(0, num_hyperedges, [&](const mt_kahypar::HyperedgeID& he) {
+    const char* help_msg = "(Note: the last element of 'hyperedge_indices' must be a sentinel with value "
+      "equal to the number of pins; hyperedge_indices has one more element than the number of hyperedges)";
+    if (hyperedge_indices[he + 1] < hyperedge_indices[he]) {
+      throw InvalidInputException(std::string("Hyperedge indices must be in ascending order ") + help_msg);
+    } else if (hyperedge_indices[he + 1] - hyperedge_indices[he] > num_vertices) {
+      throw InvalidInputException("Hyperedge " + STR(he) + " has too many entries " + help_msg);
+    }
+
+    const size_t num_pins = hyperedge_indices[he + 1] - hyperedge_indices[he];
+    edge_vector[he].resize(num_pins);
+    for ( size_t i = 0; i < num_pins; ++i ) {
+      mt_kahypar_hypernode_id_t pin = hyperedges[hyperedge_indices[he] + i];
+      check_overflow<HypernodeID>(pin, "pin");
+      edge_vector[he][i] = pin;
+    }
+
+    utils::deduplicateHyperedgePins(edge_vector[he], num_duplicated_pins, num_hes_with_duplicated_pins);
+  });
+
+  if ( context.partition.enable_logging && num_hes_with_duplicated_pins > 0 ) {
+    WARNING("Removed " << num_duplicated_pins << " duplicated pins in " << num_hes_with_duplicated_pins << " hyperedges!");
+  }
+  return create_hypergraph(context, num_vertices, num_hyperedges, edge_vector, hyperedge_weights, vertex_weights);
+}
+
 mt_kahypar_hypergraph_t create_graph(const Context& context,
                                      const mt_kahypar_hypernode_id_t num_vertices,
                                      const mt_kahypar_hyperedge_id_t num_edges,
                                      const vec<std::pair<HypernodeID, HypernodeID>>& edge_vector,
                                      const mt_kahypar_hyperedge_weight_t* edge_weights,
                                      const mt_kahypar_hypernode_weight_t* vertex_weights) {
+  check_overflow<HypernodeID>(num_vertices, "number of nodes");
+  check_overflow<HyperedgeID>(num_edges, "number of edges");
+
   switch ( context.partition.preset_type ) {
     case PresetType::deterministic:
+    case PresetType::deterministic_quality:
     case PresetType::large_k:
     case PresetType::default_preset:
     case PresetType::quality:
@@ -367,6 +433,7 @@ mt_kahypar_partitioned_hypergraph_t create_partitioned_hypergraph(mt_kahypar_hyp
     switch ( context.partition.preset_type ) {
       case PresetType::large_k:
       case PresetType::deterministic:
+      case PresetType::deterministic_quality:
       case PresetType::default_preset:
       case PresetType::quality:
         ASSERT(hypergraph.type == STATIC_GRAPH);
@@ -385,6 +452,7 @@ mt_kahypar_partitioned_hypergraph_t create_partitioned_hypergraph(mt_kahypar_hyp
         return create_partitioned_hypergraph<SparsePartitionedHypergraph>(
           utils::cast<ds::StaticHypergraph>(hypergraph), num_blocks, partition);
       case PresetType::deterministic:
+      case PresetType::deterministic_quality:
       case PresetType::default_preset:
       case PresetType::quality:
         ASSERT(hypergraph.type == STATIC_HYPERGRAPH);
@@ -419,8 +487,12 @@ mt_kahypar_partitioned_hypergraph_t partition_impl(mt_kahypar_hypergraph_t hg, C
   context.partition.instance_type = get_instance_type(hg);
   context.partition.partition_type = to_partition_c_type(context.partition.preset_type, context.partition.instance_type);
   prepare_context(context);
-  context.partition.num_vcycles = 0;
-  return PartitionerFacade::partition(hg, context, target_graph);
+
+  HighResClockTimepoint start = std::chrono::high_resolution_clock::now();
+  auto phg = PartitionerFacade::partition(hg, context, target_graph);
+  HighResClockTimepoint end = std::chrono::high_resolution_clock::now();
+  PartitionerFacade::printPartitioningResults(phg, context, end - start);
+  return phg;
 }
 
 mt_kahypar_partitioned_hypergraph_t partition(mt_kahypar_hypergraph_t hg, const Context& context) {
@@ -453,7 +525,11 @@ void improve_impl(mt_kahypar_partitioned_hypergraph_t phg,
   context.partition.partition_type = to_partition_c_type(context.partition.preset_type, context.partition.instance_type);
   prepare_context(context);
   context.partition.num_vcycles = num_vcycles;
+
+  HighResClockTimepoint start = std::chrono::high_resolution_clock::now();
   PartitionerFacade::improve(phg, context, target_graph);
+  HighResClockTimepoint end = std::chrono::high_resolution_clock::now();
+  PartitionerFacade::printPartitioningResults(phg, context, end - start);
 }
 
 void improve(mt_kahypar_partitioned_hypergraph_t phg, const Context& context, const size_t num_vcycles) {

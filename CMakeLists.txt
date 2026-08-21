@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules)
 
 # define the project version
-set(MT_KAHYPAR_VERSION "1.5.1")
+set(MT_KAHYPAR_VERSION "1.6.2")
 string(SUBSTRING "${MT_KAHYPAR_VERSION}" 0 1 MT_KAHYPAR_SO_VERSION)
 set(MTKAHYPAR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
@@ -11,8 +11,8 @@ project(MtKaHyPar
         DESCRIPTION "Mt-KaHyPar: Multi-Threaded Karlsruhe Hypergraph Partitioning"
         LANGUAGES CXX C)
 set(PROJECT_URL "https://github.com/kahypar/mt-kahypar")
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 
 #################################################################
 ## Sanity checks and policies                                  ##
@@ -89,7 +89,9 @@ option(KAHYPAR_INSTALL_CLI "Provide a target to install an executable binary `mt
 option(KAHYPAR_BUILD_DEBIAN_PACKAGE "Provide a target to build a debian package." OFF)
 
 # dependencies
-option(KAHYPAR_DISABLE_HWLOC "Exclude components requiring hwloc. Might impact performance on NUMA platforms." OFF)
+option(KAHYPAR_DISABLE_HWLOC "Exclude components requiring hwloc. Might impact running time on NUMA platforms." OFF)
+option(KAHYPAR_DISABLE_GROWT "Remove the growt dependency. Might significantly impact running time of the Steiner tree metric." OFF)
+option(KAHYPAR_DISABLE_PARLAY "Remove the parlay dependency. Might impact running time of deterministic mode on some instances." OFF)
 
 # specific compile features/build properties
 option(KAHYPAR_USE_64_BIT_IDS "Enables 64-bit vertex and hyperedge IDs." OFF)
@@ -244,84 +246,8 @@ if(KAHYPAR_DISABLE_HWLOC)
   target_compile_definitions(MtKaHyPar-BuildFlags INTERFACE KAHYPAR_DISABLE_HWLOC)
 endif()
 
-
-#################################################################
-## Setup of dependencies                                       ##
-#################################################################
-
-include(FetchContent)
-set(KAHYPAR_SHARED_RESOURCES_TAG 6d5c8e2444e4310667ec1925e995f26179d7ee88)
-set(KAHYPAR_WHFC_TAG             30b0eeb0e49577d06c3deb09a44b035d81c529d2)
-set(KAHYPAR_GROWT_TAG            0c1148ebcdfd4c04803be79706533ad09cc81d37)
-# set(KAHYPAR_TBB_VERSION          v2022.0.0)
-set(KAHYPAR_GOOGLETEST_VERSION   v1.15.2)
-set(KAHYPAR_PYBIND11_VERSION     v2.13.6)
-
-target_include_directories(MtKaHyPar-Include INTERFACE
-                           ${CMAKE_CURRENT_SOURCE_DIR}/external_tools/kahypar-shared-resources
-                           ${CMAKE_CURRENT_SOURCE_DIR}/external_tools/growt
-                           ${CMAKE_CURRENT_SOURCE_DIR}/external_tools/WHFC)
-
-
-if (KAHYPAR_ENABLE_TESTING)
-  message(STATUS "Fetching test dependencies...")
-
-  FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        ${KAHYPAR_GOOGLETEST_VERSION}
-  )
-  FetchContent_MakeAvailable(googletest)
-
-  include(gmock)
-  enable_testing()
-
-  add_library(MtKaHyPar-Test INTERFACE)
-  target_link_libraries(MtKaHyPar-Test INTERFACE gmock gtest gtest_main)
-endif()
-
-if(KAHYPAR_STATIC_LINK_DEPENDENCIES)
-  set(BUILD_SHARED_LIBS OFF)
-endif()
-# if(KAHYPAR_DOWNLOAD_BOOST)
-#   # Download Boost
-#   set(BOOST_ENABLE_CMAKE ON)
-#   FetchContent_Declare(
-#     Boost EXCLUDE_FROM_ALL SYSTEM
-#     URL https://github.com/boostorg/boost/releases/download/boost-1.86.0/boost-1.86.0-cmake.tar.gz
-#     )
-#   FetchContent_MakeAvailable(Boost)
-# else()
-#   # Find system Boost
-#   find_package(Boost 1.69 REQUIRED COMPONENTS program_options)
-#   if(NOT Boost_FOUND)
-#     message(FATAL_ERROR "
-#         Boost not found. Install Boost on your system or
-#         add -DKAHYPAR_DOWNLOAD_BOOST=On to the cmake build command.")
-#   endif()
-#   message(STATUS "Boost Include: ${Boost_INCLUDE_DIRS}, Boost Library: ${Boost_LIBRARY_DIRS}")
-# endif()
-
-# # newer boost versions require to add all targets explicitly
-# foreach(BOOST_TARGET ${BOOST_INCLUDE_LIBRARIES})
-#   if(TARGET Boost::${BOOST_TARGET})
-#     target_link_libraries(MtKaHyPar-Include INTERFACE Boost::${BOOST_TARGET})
-#   endif()
-# endforeach()
-
-add_subdirectory(external_tools/boost_kahypar)
-target_link_libraries(MtKaHyPar-Include INTERFACE BoostKaHyPar)
-
-add_subdirectory(external_tools/tbb_kahypar)
-target_link_libraries(MtKaHyPar-Include INTERFACE TBBKaHyPar TBBMallocKaHyPar)
-
-# Find HWLOC Library
-if(NOT KAHYPAR_DISABLE_HWLOC)
-  include(DetectHwloc)
-  if(NOT TARGET HWLOC::hwloc)
-    message(FATAL_ERROR "Hwloc library not found. Install hwloc on your system.")
-  endif()
-  target_link_libraries(MtKaHyPar-Include INTERFACE HWLOC::hwloc)
+if(KAHYPAR_DISABLE_PARLAY)
+  target_compile_definitions(MtKaHyPar-BuildFlags INTERFACE KAHYPAR_DISABLE_PARLAY)
 endif()
 
 
@@ -350,7 +276,7 @@ endif(KAHYPAR_USE_GCOV)
 find_program(LLD_BIN lld)
 if (LLD_BIN AND KAHYPAR_X86)
   message(STATUS "Found and will use LLVM linker " ${LLD_BIN})
-  target_compile_options(MtKaHyPar-BuildFlags INTERFACE -fuse-ld=lld)
+  target_link_options(MtKaHyPar-BuildFlags INTERFACE -fuse-ld=lld)
 endif()
 
 target_compile_options(MtKaHyPar-BuildFlags INTERFACE $<$<CONFIG:RELEASE>:-O3>
@@ -366,20 +292,28 @@ endif()
 if (KAHYPAR_X86 AND KAHYPAR_ENABLE_EXTENDED_INSTRUCTIONS)
   include(CheckCXXCompilerFlag)
   include(CheckSSE4_2)
+  set(CMAKE_REQUIRED_QUIET TRUE)
+  check_cxx_compiler_flag(-mcx16 KAHYPAR_HAS_MCX16)
   check_cxx_compiler_flag(-mcrc32 KAHYPAR_HAS_CRC32)
 
-  target_compile_options(MtKaHyPar-BuildFlags INTERFACE -mcx16)
+  if(KAHYPAR_HAS_MCX16)
+    target_compile_options(MtKaHyPar-BuildFlags INTERFACE -mcx16)
+  endif()
   if(KAHYPAR_HAS_CRC32)
     target_compile_options(MtKaHyPar-BuildFlags INTERFACE -mcrc32)
   endif()
   if(BUILTIN_POPCNT)
     target_compile_options(MtKaHyPar-BuildFlags INTERFACE -msse4.2)
   endif()
-  if(BUILTIN_POPCNT AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+endif()
+
+# check this after include(CheckSSE4_2) so BUILTIN_POPCNT is available
+if (NOT KAHYPAR_DISABLE_GROWT AND KAHYPAR_ENABLE_STEINER_TREE_METRIC
+    AND KAHYPAR_X86 AND KAHYPAR_ENABLE_EXTENDED_INSTRUCTIONS AND BUILTIN_POPCNT)
     # growt requires SSE instructions
-    # TODO: it is not clear whether/why Linux is required for growt
-    target_compile_definitions(MtKaHyPar-BuildFlags INTERFACE KAHYPAR_USE_GROWT)
-  endif()
+    set(KAHYPAR_USE_GROWT TRUE)
+else()
+    set(KAHYPAR_USE_GROWT FALSE)
 endif()
 
 if(KAHYPAR_ENABLE_ARCH_COMPILE_OPTIMIZATIONS)
@@ -390,6 +324,72 @@ endif()
 if(KAHYPAR_USE_ADDRESS_SANITIZER AND (NOT KAHYPAR_CI_BUILD))
   target_compile_options(MtKaHyPar-BuildFlags INTERFACE $<$<CONFIG:DEBUG>:-fsanitize=address>)
   target_link_options(MtKaHyPar-BuildFlags INTERFACE $<$<CONFIG:DEBUG>:-fsanitize=address>)
+endif()
+
+
+#################################################################
+## Setup of dependencies                                       ##
+#################################################################
+
+include(FetchContent)
+set(KAHYPAR_SHARED_RESOURCES_TAG 6d5c8e2444e4310667ec1925e995f26179d7ee88)
+set(KAHYPAR_WHFC_TAG             51b27ff2c27a4794bfbaa4e8189d38159d249312)
+set(KAHYPAR_GROWT_TAG            04b2a1afe4c5844c960a5a8289bb608fe2c6c68c)
+set(KAHYPAR_PARLAY_TAG           e1f1dc0ccf930492a2723f7fbef8510d35bf57f5)
+set(KAHYPAR_CLI11_VERSION        v2.6.1)
+set(KAHYPAR_GOOGLETEST_VERSION   v1.15.2)
+set(KAHYPAR_PYBIND11_VERSION     v2.13.6)
+
+# Header-only dependencies are vendored at the upstream revisions above.
+target_include_directories(MtKaHyPar-Include INTERFACE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/external_tools/kahypar-shared-resources
+                           ${CMAKE_CURRENT_SOURCE_DIR}/external_tools
+                           ${CMAKE_CURRENT_SOURCE_DIR}/external_tools/CLI11/include)
+
+if(KAHYPAR_USE_GROWT)
+  target_compile_definitions(MtKaHyPar-BuildFlags INTERFACE KAHYPAR_USE_GROWT)
+endif()
+
+if(NOT KAHYPAR_DISABLE_PARLAY)
+  target_include_directories(MtKaHyPar-Include INTERFACE
+                             ${CMAKE_CURRENT_SOURCE_DIR}/external_tools/parlay/include)
+  target_compile_options(MtKaHyPar-BuildFlags INTERFACE -DPARLAY_TBB)
+endif()
+
+
+if (KAHYPAR_ENABLE_TESTING)
+  FetchContent_Declare(
+    googletest EXCLUDE_FROM_ALL SYSTEM
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        ${KAHYPAR_GOOGLETEST_VERSION}
+  )
+  FetchContent_MakeAvailable(googletest)
+  include(gmock)
+  enable_testing()
+
+  add_library(MtKaHyPar-Test INTERFACE)
+  target_link_libraries(MtKaHyPar-Test INTERFACE gmock gtest gtest_main)
+endif()
+
+
+if(KAHYPAR_STATIC_LINK_DEPENDENCIES)
+  set(BUILD_SHARED_LIBS OFF)
+endif()
+
+add_subdirectory(external_tools/tbb_kahypar)
+target_link_libraries(MtKaHyPar-Include INTERFACE TBBKaHyPar TBBMallocKaHyPar)
+
+
+# Find HWLOC Library
+if(NOT KAHYPAR_DISABLE_HWLOC)
+  if(KAHYPAR_STATIC_LINK_DEPENDENCIES)
+    message(WARNING "Static linking of hwloc is not supported. Consider using -DKAHYPAR_DISABLE_HWLOC=On to remove the dependency.")
+  endif()
+  include(DetectHwloc)
+  if(NOT TARGET HWLOC::hwloc)
+    message(FATAL_ERROR "Hwloc library not found. Install hwloc on your system.")
+  endif()
+  target_link_libraries(MtKaHyPar-Include INTERFACE HWLOC::hwloc)
 endif()
 
 

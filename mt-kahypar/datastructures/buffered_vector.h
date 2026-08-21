@@ -30,17 +30,21 @@
 #include <vector>
 #include <cassert>
 
-#include <tbb_kahypar/scalable_allocator.h>
 #include <tbb_kahypar/enumerable_thread_specific.h>
+
+#include "mt-kahypar/parallel/stl/allocator.h"
 
 namespace mt_kahypar::ds {
 
 template<typename T>
 class BufferedVector {
 public:
-  using vec_t = std::vector<T, tbb_kahypar::scalable_allocator<T>>;
+  using vec_t = std::vector<T, parallel::scalable_allocator<T>>;
 
-  BufferedVector(size_t max_size) :
+  BufferedVector() : BufferedVector(0)
+  { }
+
+  explicit BufferedVector(size_t max_size) :
     data(max_size, T()),
     buffers([&] { vec_t x; x.reserve(MAX_BUFFER_SIZE); return x; })
   { }

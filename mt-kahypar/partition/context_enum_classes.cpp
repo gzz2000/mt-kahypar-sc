@@ -33,17 +33,6 @@
 
 namespace mt_kahypar {
 
-  std::ostream & operator<< (std::ostream& os, const Type& type) {
-    switch (type) {
-      case Type::Unweighted: return os << "unweighted";
-      case Type::EdgeWeights: return os << "edge_weights";
-      case Type::NodeWeights: return os << "node_weights";
-      case Type::EdgeAndNodeWeights: return os << "edge_and_node_weights";
-        // omit default case to trigger compiler warning for missing cases
-    }
-    return os << static_cast<uint8_t>(type);
-  }
-
   std::ostream & operator<< (std::ostream& os, const FileFormat& format) {
     switch (format) {
       case FileFormat::hMetis: return os << "hMetis";
@@ -66,6 +55,7 @@ namespace mt_kahypar {
   std::ostream & operator<< (std::ostream& os, const PresetType& type) {
     switch (type) {
       case PresetType::deterministic: return os << "deterministic";
+      case PresetType::deterministic_quality: return os << "deterministic_quality";
       case PresetType::large_k: return os << "large_k";
       case PresetType::default_preset: return os << "default";
       case PresetType::quality: return os << "quality";
@@ -147,17 +137,6 @@ namespace mt_kahypar {
     return os << static_cast<uint8_t>(type);
   }
 
-  std::ostream & operator<< (std::ostream& os, const SimiliarNetCombinerStrategy& strategy) {
-    switch (strategy) {
-      case SimiliarNetCombinerStrategy::union_nets: return os << "union";
-      case SimiliarNetCombinerStrategy::max_size: return os << "max_size";
-      case SimiliarNetCombinerStrategy::importance: return os << "importance";
-      case SimiliarNetCombinerStrategy::UNDEFINED: return os << "UNDEFINED";
-        // omit default case to trigger compiler warning for missing cases
-    }
-    return os << static_cast<uint8_t>(strategy);
-  }
-
   std::ostream & operator<< (std::ostream& os, const CoarseningAlgorithm& algo) {
     switch (algo) {
       case CoarseningAlgorithm::multilevel_coarsener: return os << "multilevel_coarsener";
@@ -227,6 +206,15 @@ namespace mt_kahypar {
     return os << static_cast<uint8_t>(algo);
   }
 
+  std::ostream & operator<< (std::ostream& os, const JetAlgorithm& algo) {
+    switch (algo) {
+      case JetAlgorithm::deterministic: return os << "deterministic";
+      case JetAlgorithm::do_nothing: return os << "jet_do_nothing";
+        // omit default case to trigger compiler warning for missing cases
+    }
+    return os << static_cast<uint8_t>(algo);
+  }
+
   std::ostream & operator<< (std::ostream& os, const FMAlgorithm& algo) {
     switch (algo) {
       case FMAlgorithm::kway_fm: return os << "kway_fm";
@@ -242,6 +230,7 @@ namespace mt_kahypar {
       case FlowAlgorithm::flow_cutter: return os << "flow_cutter";
       case FlowAlgorithm::mock: return os << "mock";
       case FlowAlgorithm::do_nothing: return os << "do_nothing";
+      case FlowAlgorithm::deterministic: return os << "deterministic";
         // omit default case to trigger compiler warning for missing cases
     }
     return os << static_cast<uint8_t>(algo);
@@ -250,7 +239,7 @@ namespace mt_kahypar {
 
   std::ostream & operator<< (std::ostream& os, const RebalancingAlgorithm& algo) {
       switch (algo) {
-        case RebalancingAlgorithm::simple_rebalancer: return os << "simple_rebalancer";
+        case RebalancingAlgorithm::deterministic: return os << "deterministic";
         case RebalancingAlgorithm::advanced_rebalancer: return os << "advanced_rebalancer";
         case RebalancingAlgorithm::do_nothing: return os << "do_nothing";
           // omit default case to trigger compiler warning for missing cases
@@ -278,7 +267,7 @@ namespace mt_kahypar {
   }
 
   Mode modeFromString(const std::string& mode) {
-    if (mode == "rb") {
+    if (mode == "rb" || mode == "recursive_bipartitioning") {
       return Mode::recursive_bipartitioning;
     } else if (mode == "direct") {
       return Mode::direct;
@@ -287,6 +276,16 @@ namespace mt_kahypar {
     }
     throw InvalidParameterException("Illegal option: " + mode);
     return Mode::UNDEFINED;
+  }
+
+  FileFormat fileFormatFromString(const std::string& type) {
+    if (type == "hmetis") {
+      return FileFormat::hMetis;
+    } else if (type == "metis") {
+      return FileFormat::Metis;
+    }
+    throw InvalidParameterException("Illegal option: " + type);
+    return FileFormat::hMetis;
   }
 
   InstanceType instanceTypeFromString(const std::string& type) {
@@ -302,6 +301,8 @@ namespace mt_kahypar {
   PresetType presetTypeFromString(const std::string& type) {
     if (type == "deterministic") {
       return PresetType::deterministic;
+    } else if (type == "deterministic_quality") {
+      return PresetType::deterministic_quality;
     } else if (type == "large_k") {
       return PresetType::large_k;
     } else if (type == "default") {
@@ -342,18 +343,6 @@ namespace mt_kahypar {
     }
     throw InvalidParameterException("No valid louvain edge weight.");
     return LouvainEdgeWeight::UNDEFINED;
-  }
-
-  SimiliarNetCombinerStrategy similiarNetCombinerStrategyFromString(const std::string& type) {
-    if (type == "union") {
-      return SimiliarNetCombinerStrategy::union_nets;
-    } else if (type == "max_size") {
-      return SimiliarNetCombinerStrategy::max_size;
-    } else if (type == "importance") {
-      return SimiliarNetCombinerStrategy::importance;
-    }
-    throw InvalidParameterException("No valid similiar net unifier strategy.");
-    return SimiliarNetCombinerStrategy::UNDEFINED;
   }
 
   CoarseningAlgorithm coarseningAlgorithmFromString(const std::string& type) {
@@ -447,6 +436,16 @@ namespace mt_kahypar {
     return LabelPropagationAlgorithm::do_nothing;
   }
 
+  JetAlgorithm jetAlgorithmFromString(const std::string& type) {
+    if (type == "deterministic") {
+      return JetAlgorithm::deterministic;
+    } else if (type == "do_nothing") {
+      return JetAlgorithm::do_nothing;
+    }
+    throw InvalidParameterException("Illegal option: " + type);
+    return JetAlgorithm::do_nothing;
+  }
+
   FMAlgorithm fmAlgorithmFromString(const std::string& type) {
     if (type == "kway_fm") {
       return FMAlgorithm::kway_fm;
@@ -464,14 +463,16 @@ namespace mt_kahypar {
       return FlowAlgorithm::flow_cutter;
     } else if (type == "do_nothing") {
       return FlowAlgorithm::do_nothing;
+    } else if (type == "deterministic") {
+      return FlowAlgorithm::deterministic;
     }
     throw InvalidParameterException("Illegal option: " + type);
     return FlowAlgorithm::do_nothing;
   }
 
   RebalancingAlgorithm rebalancingAlgorithmFromString(const std::string& type) {
-    if (type == "simple_rebalancer") {
-      return RebalancingAlgorithm::simple_rebalancer;
+    if (type == "deterministic") {
+      return RebalancingAlgorithm::deterministic;
     } else if (type == "advanced_rebalancer") {
       return RebalancingAlgorithm::advanced_rebalancer;
     } else if (type == "do_nothing") {

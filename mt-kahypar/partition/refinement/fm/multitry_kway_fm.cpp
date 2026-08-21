@@ -31,6 +31,7 @@
 
 #include "mt-kahypar/definitions.h"
 #include "mt-kahypar/utils/utilities.h"
+#include "mt-kahypar/parallel/thread_management.h"
 #include "mt-kahypar/partition/factories.h"   // TODO removing this could make compilation a lot faster
 #include "mt-kahypar/partition/metrics.h"
 #include "mt-kahypar/partition/refinement/gains/gain_definitions.h"
@@ -130,22 +131,20 @@ namespace mt_kahypar {
       }
 
       timer.start_timer("find_moves", "Find Moves");
-      size_t num_tasks = std::min(num_border_nodes, size_t(TBBInitializer::instance().total_number_of_threads()));
+      size_t num_tasks = std::min(num_border_nodes, static_cast<size_t>(parallel::total_number_of_threads()));
       sharedData.finishedTasks.store(0, std::memory_order_relaxed);
       fm_strategy->findMoves(utils::localized_fm_cast(ets_fm), hypergraph,
                              num_tasks, num_seeds, round);
       timer.stop_timer("find_moves");
 
-      if (is_unconstrained && !isBalanced(phg, max_part_weights)) {
+      if (is_unconstrained && !metrics::imbalance(phg, context, max_part_weights).isValidPartition()) {
         vec<vec<Move>> moves_by_part;
 
         // compute rebalancing moves
         timer.start_timer("rebalance_fm", "Rebalance");
-        Metrics tmp_metrics;
-        ASSERT([&]{ // correct quality only required for assertions
-          tmp_metrics.quality = metrics::quality(phg, context);
-          return true;
-        }());
+        Metrics tmp_metrics{0, 0};
+        // the correct quality is only required for assertions
+        ENABLE_ASSERTIONS(tmp_metrics.quality = metrics::quality(phg, context));
 
         if constexpr (GainCache::invalidates_entries) {
           tbb_kahypar::parallel_for(MoveID(0), sharedData.moveTracker.numPerformedMoves(), [&](const MoveID i) {
@@ -206,7 +205,8 @@ namespace mt_kahypar {
       }
     }
 
-    if (context.partition.show_memory_consumption && context.partition.verbose_output
+    if (context.partition.show_memory_consumption
+        && context.partition.enable_logging
         && context.type == ContextType::main
         && phg.initialNumNodes() == sharedData.moveTracker.moveOrder.size() /* top level */) {
       printMemoryConsumption();
@@ -226,6 +226,7 @@ namespace mt_kahypar {
                                                                   const vec<HypernodeID>& refinement_nodes) {
     // clear border nodes
     sharedData.refinementNodes.clear();
+    const int total_num_threads = parallel::total_number_of_threads();
 
     if ( refinement_nodes.empty() ) {
       // log(n) level case
@@ -239,7 +240,7 @@ namespace mt_kahypar {
           // our working queue for border nodes with which we initialize the localized
           // FM searches. For now, we do not know why this occurs but this prevents
           // the segmentation fault.
-          if ( task_id >= 0 && task_id < TBBInitializer::instance().total_number_of_threads() ) {
+          if ( task_id >= 0 && task_id < total_num_threads ) {
             for (HypernodeID u = r.begin(); u < r.end(); ++u) {
               if (phg.nodeIsEnabled(u) && phg.isBorderNode(u) && !phg.isFixed(u)) {
                 sharedData.refinementNodes.safe_push(u, task_id);
@@ -252,7 +253,7 @@ namespace mt_kahypar {
       tbb_kahypar::parallel_for(UL(0), refinement_nodes.size(), [&](const size_t i) {
         const HypernodeID u = refinement_nodes[i];
         const int task_id = tbb_kahypar::this_task_arena::current_thread_index();
-        if ( task_id >= 0 && task_id < TBBInitializer::instance().total_number_of_threads() ) {
+        if ( task_id >= 0 && task_id < total_num_threads ) {
           if (phg.nodeIsEnabled(u) && phg.isBorderNode(u) && !phg.isFixed(u)) {
             sharedData.refinementNodes.safe_push(u, task_id);
           }

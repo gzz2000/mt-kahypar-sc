@@ -31,9 +31,9 @@ jobs:
           mkdir build
           cd build
           cmake .. --preset=default -DCMAKE_POSITION_INDEPENDENT_CODE=On -DKAHYPAR_CI_BUILD=ON \
-          -DKAHYPAR_DOWNLOAD_BOOST=ON -DKAHYPAR_STATIC_LINK_DEPENDENCIES=ON -DKAHYPAR_INSTALL_CLI=ON \
+          -DKAHYPAR_STATIC_LINK_DEPENDENCIES=ON -DKAHYPAR_INSTALL_CLI=ON \
           -DKAHYPAR_ENABLE_ARCH_COMPILE_OPTIMIZATIONS=OFF -DKAHYPAR_ENABLE_THREAD_PINNING=OFF -DKAHYPAR_BUILD_DEBIAN_PACKAGE=ON
-          make -j4
+          make -j2
           make package-mtkahypar-deb
 
       - uses: actions/upload-artifact@v4
@@ -54,6 +54,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          sudo apt-get -y update
           sudo apt-get -y install libhwloc-dev gcc-10 g++-10
 
       - name: Build Mt-KaHyPar Debian Package
@@ -65,9 +66,9 @@ jobs:
           mkdir build
           cd build
           cmake .. --preset=default -DCMAKE_POSITION_INDEPENDENT_CODE=On -DKAHYPAR_CI_BUILD=ON \
-          -DKAHYPAR_DOWNLOAD_BOOST=ON -DKAHYPAR_STATIC_LINK_DEPENDENCIES=ON -DKAHYPAR_INSTALL_CLI=ON \
+          -DKAHYPAR_STATIC_LINK_DEPENDENCIES=ON -DKAHYPAR_INSTALL_CLI=ON \
           -DKAHYPAR_ENABLE_ARCH_COMPILE_OPTIMIZATIONS=OFF -DKAHYPAR_ENABLE_THREAD_PINNING=OFF -DKAHYPAR_BUILD_DEBIAN_PACKAGE=ON
-          make -j4
+          make -j2
           make package-mtkahypar-deb
 
       - uses: actions/upload-artifact@v4

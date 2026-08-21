@@ -33,12 +33,12 @@
 #include "mt-kahypar/partition/context.h"
 #include "mt-kahypar/partition/refinement/i_refiner.h"
 #include "mt-kahypar/partition/coarsening/coarsening_commons.h"
-#include "mt-kahypar/partition/refinement/flows/scheduler.h"
 #include "mt-kahypar/partition/refinement/gains/gain_cache_ptr.h"
+#include "mt-kahypar/io/partitioning_output.h"
+#include "mt-kahypar/utils/cast.h"
 #include "mt-kahypar/utils/utilities.h"
 #include "mt-kahypar/partition/metrics.h"
 #include "mt-kahypar/partition/factories.h"
-#include "mt-kahypar/utils/cast.h"
 
 namespace mt_kahypar {
 
@@ -61,9 +61,11 @@ class UncoarsenerBase {
           _uncoarseningData(uncoarseningData),
           _gain_cache(gain_cache_t {nullptr, GainPolicy::none}),
           _label_propagation(nullptr),
+          _jet(nullptr),
           _fm(nullptr),
           _flows(nullptr),
-          _rebalancer(nullptr) {}
+          _rebalancer(nullptr),
+          _current_metrics() {}
 
   UncoarsenerBase(const UncoarsenerBase&) = delete;
   UncoarsenerBase(UncoarsenerBase&&) = delete;
@@ -81,9 +83,11 @@ class UncoarsenerBase {
   UncoarseningData<TypeTraits>& _uncoarseningData;
   gain_cache_t _gain_cache;
   std::unique_ptr<IRefiner> _label_propagation;
+  std::unique_ptr<IRefiner> _jet;
   std::unique_ptr<IRefiner> _fm;
   std::unique_ptr<IRefiner> _flows;
   std::unique_ptr<IRebalancer> _rebalancer;
+  Metrics _current_metrics;
 
  protected:
 
@@ -113,7 +117,7 @@ class UncoarsenerBase {
     if ( _context.partition.objective != Objective::km1 ) {
       stats.add_stat("initial_km1", metrics::quality(phg, Objective::km1));
     }
-    stats.add_stat("initial_imbalance", m.imbalance);
+    stats.add_stat("initial_imbalance", m.imbalance.imbalance_value);
     return m;
   }
 
@@ -121,9 +125,12 @@ class UncoarsenerBase {
     _gain_cache = GainCachePtr::constructGainCache(_context);
     // refinement algorithms require access to the rebalancer
     _rebalancer = RebalancerFactory::getInstance().createObject(
-      _context.refinement.rebalancer, _hg.initialNumNodes(), _context, _gain_cache);
+      _context.refinement.rebalancing.algorithm, _hg.initialNumNodes(), _context, _gain_cache);
     _label_propagation = LabelPropagationFactory::getInstance().createObject(
       _context.refinement.label_propagation.algorithm,
+      _hg.initialNumNodes(), _hg.initialNumEdges(), _context, _gain_cache, *_rebalancer);
+    _jet = JetFactory::getInstance().createObject(
+      _context.refinement.jet.algorithm,
       _hg.initialNumNodes(), _hg.initialNumEdges(), _context, _gain_cache, *_rebalancer);
     _fm = FMFactory::getInstance().createObject(
       _context.refinement.fm.algorithm,
@@ -131,6 +138,53 @@ class UncoarsenerBase {
     _flows = FlowSchedulerFactory::getInstance().createObject(
       _context.refinement.flows.algorithm,
       _hg.initialNumNodes(), _hg.initialNumEdges(), _context, _gain_cache);
+  }
+
+  void applyRebalancing() {
+    const bool logging = _context.partition.enable_logging
+      && _context.partition.verbose_logging
+      && _context.type == ContextType::main;
+    const HyperedgeWeight quality_before = _current_metrics.quality;
+    if (logging) {
+      LOG << RED << "Partition is imbalanced (Current Imbalance:"
+      << metrics::imbalance(*_uncoarseningData.partitioned_hg, _context).imbalance_value << ")" << END;
+
+      LOG << "Part weights: (violations in red)";
+      io::printPartWeightsAndSizes(*_uncoarseningData.partitioned_hg, _context);
+    }
+
+    if ( _context.refinement.rebalancing.algorithm != RebalancingAlgorithm::do_nothing ) {
+      if (logging) {
+        LOG << RED << "Start rebalancing!" << END;
+      }
+
+      // Preform rebalancing
+      _timer.start_timer("rebalance", "Rebalance");
+      mt_kahypar_partitioned_hypergraph_t phg =
+        utils::partitioned_hg_cast(*_uncoarseningData.partitioned_hg);
+      _rebalancer->refine(phg, {}, _current_metrics, 0.0);
+      _timer.stop_timer("rebalance");
+
+      const HyperedgeWeight quality_after = _current_metrics.quality;
+      if (logging) {
+        const HyperedgeWeight quality_delta = quality_after - quality_before;
+        if (quality_delta > 0) {
+          LOG << RED << "Rebalancer decreased solution quality by" << quality_delta
+          << "(Current Imbalance:" << metrics::imbalance(*_uncoarseningData.partitioned_hg, _context).imbalance_value << ")" << END;
+        } else {
+          LOG << GREEN << "Rebalancer improves solution quality by" << abs(quality_delta)
+          << "(Current Imbalance:" << metrics::imbalance(*_uncoarseningData.partitioned_hg, _context).imbalance_value << ")" << END;
+        }
+      }
+    } else {
+      if (logging) {
+        LOG << RED << "Skip rebalancing since no rebalancing algorithm is configured" << END;
+      }
+    }
+
+
+    ASSERT(metrics::quality(*_uncoarseningData.partitioned_hg, _context) == _current_metrics.quality,
+      V(_current_metrics.quality) << V(metrics::quality(*_uncoarseningData.partitioned_hg, _context)));
   }
 };
 }

@@ -26,10 +26,13 @@
  * SOFTWARE.
  ******************************************************************************/
 
-#include <cstring>
-#include <type_traits>
+#include <algorithm>
+#include <cctype>
 #include <charconv>
-#include <boost_kahypar/lexical_cast.hpp>
+#include <cstring>
+#include <optional>
+#include <string>
+#include <type_traits>
 
 #include "include/mtkahypar.h"
 #include "include/mtkahypartypes.h"
@@ -49,6 +52,7 @@
 #include "mt-kahypar/macros.h"
 #include "mt-kahypar/utils/delete.h"
 #include "mt-kahypar/utils/exception.h"
+#include "mt-kahypar/utils/randomize.h"
 
 using namespace mt_kahypar;
 
@@ -67,6 +71,7 @@ namespace {
   PresetType to_preset_type(mt_kahypar_preset_type_t preset) {
     switch ( preset ) {
       case DETERMINISTIC: return PresetType::deterministic;
+      case DETERMINISTIC_QUALITY: return PresetType::deterministic_quality;
       case LARGE_K: return PresetType::large_k;
       case DEFAULT: return PresetType::default_preset;
       case QUALITY: return PresetType::quality;
@@ -78,6 +83,7 @@ namespace {
   mt_kahypar_preset_type_t from_preset_type(PresetType preset) {
     switch ( preset ) {
       case PresetType::deterministic: return DETERMINISTIC;
+      case PresetType::deterministic_quality: return DETERMINISTIC_QUALITY;
       case PresetType::large_k: return LARGE_K;
       case PresetType::default_preset: return DEFAULT;
       case PresetType::quality: return QUALITY;
@@ -111,6 +117,19 @@ namespace {
       return to_error(mt_kahypar_status_t::SYSTEM_ERROR, ex.what());
     }
     return to_error(mt_kahypar_status_t::OTHER_ERROR, ex.what());
+  }
+
+  std::optional<bool> string_to_bool(const char* input) {
+    std::string val(input);
+    std::transform(val.begin(), val.end(), val.begin(),
+      [](unsigned char c){ return std::tolower(c); });
+    if (val == "t" || val == "y" || val == "1" || val == "true" || val == "yes") {
+      return true;
+    } else if (val == "f" || val == "n" || val == "0" || val == "false" || val == "no") {
+      return false;
+    } else {
+      return {};
+    }
   }
 }
 
@@ -176,14 +195,17 @@ mt_kahypar_status_t mt_kahypar_set_context_parameter(mt_kahypar_context_t* conte
       report_conversion_error("one of km1, cut, soed");
       return mt_kahypar_status_t::INVALID_PARAMETER;
     }
-    case VERBOSE:
-      try {
-        c.partition.verbose_output = boost_kahypar::lexical_cast<bool>(value);
+    case VERBOSE: {
+      std::optional<bool> result = string_to_bool(value);
+      if (result.has_value()) {
+        c.partition.enable_logging = *result;
+        c.partition.verbose_logging = *result;
         return mt_kahypar_status_t::SUCCESS;
-      } catch ( boost_kahypar::bad_lexical_cast& ) {
+      } else {
         report_conversion_error("boolean");
         return mt_kahypar_status_t::INVALID_PARAMETER;
       }
+    }
   }
   *error = to_error(mt_kahypar_status_t::INVALID_PARAMETER,
                     "Type must be a valid value of mt_kahypar_context_parameter_type_t");
@@ -274,10 +296,11 @@ mt_kahypar_hypergraph_t mt_kahypar_read_hypergraph_from_file(const char* file_na
 mt_kahypar_target_graph_t* mt_kahypar_read_target_graph_from_file(const char* file_name,
                                                                   const mt_kahypar_context_t* context,
                                                                   mt_kahypar_error_t* error) {
-  unused(context);
+  const Context& c = *reinterpret_cast<const Context*>(context);
   TargetGraph* target_graph = nullptr;
   try {
-    ds::StaticGraph graph = io::readInputFile<ds::StaticGraph>(file_name, FileFormat::Metis, true);
+    ds::StaticGraph graph = io::readInputFile<ds::StaticGraph>(file_name, FileFormat::Metis, /*stable_construnction=*/true,
+                                                               /*remove_single_pin_hes=*/true, c.partition.enable_logging);
     target_graph = new TargetGraph(std::move(graph));
   } catch ( std::exception& ex ) {
     *error = to_error(ex);
@@ -290,23 +313,14 @@ mt_kahypar_hypergraph_t mt_kahypar_create_hypergraph(const mt_kahypar_context_t*
                                                      const mt_kahypar_hypernode_id_t num_vertices,
                                                      const mt_kahypar_hyperedge_id_t num_hyperedges,
                                                      const size_t* hyperedge_indices,
-                                                     const mt_kahypar_hyperedge_id_t* hyperedges,
+                                                     const mt_kahypar_hypernode_id_t* hyperedges,
                                                      const mt_kahypar_hyperedge_weight_t* hyperedge_weights,
                                                      const mt_kahypar_hypernode_weight_t* vertex_weights,
                                                      mt_kahypar_error_t* error) {
-  // Transform adjacence array into adjacency list
-  vec<vec<HypernodeID>> edge_vector(num_hyperedges);
-  tbb_kahypar::parallel_for<HyperedgeID>(0, num_hyperedges, [&](const mt_kahypar::HyperedgeID& he) {
-    const size_t num_pins = hyperedge_indices[he + 1] - hyperedge_indices[he];
-    edge_vector[he].resize(num_pins);
-    for ( size_t i = 0; i < num_pins; ++i ) {
-      edge_vector[he][i] = hyperedges[hyperedge_indices[he] + i];
-    }
-  });
-
   const Context& c = *reinterpret_cast<const Context*>(context);
   try {
-    return lib::create_hypergraph(c, num_vertices, num_hyperedges, edge_vector, hyperedge_weights, vertex_weights);
+    return lib::create_hypergraph_from_adjacency_array(
+      c, num_vertices, num_hyperedges, hyperedge_indices, hyperedges, hyperedge_weights, vertex_weights);
   } catch ( std::exception& ex ) {
     *error = to_error(ex);
   }
@@ -322,12 +336,14 @@ mt_kahypar_hypergraph_t mt_kahypar_create_graph(const mt_kahypar_context_t* cont
                                                 mt_kahypar_error_t* error) {
   // Transform adjacence array into adjacence list
   vec<std::pair<mt_kahypar::HypernodeID, mt_kahypar::HypernodeID>> edge_vector(num_edges);
-  tbb_kahypar::parallel_for<mt_kahypar::HyperedgeID>(0, num_edges, [&](const mt_kahypar::HyperedgeID& he) {
-    edge_vector[he] = std::make_pair(edges[2*he], edges[2*he + 1]);
-  });
 
   const Context& c = *reinterpret_cast<const Context*>(context);
   try {
+    tbb_kahypar::parallel_for<mt_kahypar::HyperedgeID>(0, num_edges, [&](const mt_kahypar::HyperedgeID& he) {
+      lib::check_overflow<HypernodeID>(edges[2*he], "endpoint of edge");
+      lib::check_overflow<HypernodeID>(edges[2*he + 1], "endpoint of edge");
+      edge_vector[he] = std::make_pair(edges[2*he], edges[2*he + 1]);
+    });
     return lib::create_graph(c, num_vertices, num_edges, edge_vector, edge_weights, vertex_weights);
   } catch ( std::exception& ex ) {
     *error = to_error(ex);

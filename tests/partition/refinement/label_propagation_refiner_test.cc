@@ -24,6 +24,8 @@
  * SOFTWARE.
  ******************************************************************************/
 
+#include <thread>
+
 #include "gmock/gmock.h"
 
 #include "tests/datastructures/hypergraph_fixtures.h"
@@ -99,7 +101,7 @@ class ALabelPropagationRefiner : public Test {
     #endif
     context.partition.instance_type = InstanceType::hypergraph;
     context.partition.partition_type = PartitionedHypergraph::TYPE;
-    context.partition.verbose_output = false;
+    context.partition.enable_logging = false;
 
     // Shared Memory
     context.shared_memory.num_threads = num_threads;
@@ -116,7 +118,7 @@ class ALabelPropagationRefiner : public Test {
 
     // Read hypergraph
     hypergraph = io::readInputFile<Hypergraph>(
-      "../tests/instances/contracted_unweighted_ibm01.hgr", FileFormat::hMetis, true);
+      "../tests/instances/contracted_unweighted_ibm01.hgr", FileFormat::hMetis, true, true, true);
     partitioned_hypergraph = PartitionedHypergraph(
       context.partition.k, hypergraph, parallel_tag_t());
     context.setupPartWeights(hypergraph.totalWeight());
@@ -154,7 +156,7 @@ class ALabelPropagationRefiner : public Test {
 };
 
 template <typename Config>
-size_t ALabelPropagationRefiner<Config>::num_threads = HardwareTopology::instance().num_cpus();
+size_t ALabelPropagationRefiner<Config>::num_threads = std::thread::hardware_concurrency();
 
 static constexpr double EPS = 0.05;
 
@@ -189,13 +191,13 @@ TYPED_TEST_SUITE(ALabelPropagationRefiner, TestConfigs);
 TYPED_TEST(ALabelPropagationRefiner, UpdatesImbalanceCorrectly) {
   mt_kahypar_partitioned_hypergraph_t phg = utils::partitioned_hg_cast(this->partitioned_hypergraph);
   this->refiner->refine(phg, {}, this->metrics, std::numeric_limits<double>::max());
-  ASSERT_DOUBLE_EQ(metrics::imbalance(this->partitioned_hypergraph, this->context), this->metrics.imbalance);
+  ASSERT_EQ(metrics::imbalance(this->partitioned_hypergraph, this->context), this->metrics.imbalance);
 }
 
 TYPED_TEST(ALabelPropagationRefiner, DoesNotViolateBalanceConstraint) {
   mt_kahypar_partitioned_hypergraph_t phg = utils::partitioned_hg_cast(this->partitioned_hypergraph);
   this->refiner->refine(phg, {}, this->metrics, std::numeric_limits<double>::max());
-  ASSERT_LE(this->metrics.imbalance, this->context.partition.epsilon + EPS);
+  ASSERT_TRUE(this->metrics.imbalance.isValidPartition());
 }
 
 TYPED_TEST(ALabelPropagationRefiner, UpdatesMetricsCorrectly) {
@@ -239,7 +241,7 @@ TYPED_TEST(ALabelPropagationRefiner, ChangesTheNumberOfBlocks) {
 
   objective_before = metrics::quality(phg_with_new_k, this->context.partition.objective);
   mt_kahypar_partitioned_hypergraph_t phg_new_k = utils::partitioned_hg_cast(phg_with_new_k);
-  this->gain_cache.reset();
+  this->gain_cache.reset(phg_with_new_k.initialNumNodes(), phg_with_new_k.k());
   this->refiner->initialize(phg_new_k);
   this->rebalancer->initialize(phg_new_k);
   this->refiner->refine(phg_new_k, {}, this->metrics, std::numeric_limits<double>::max());

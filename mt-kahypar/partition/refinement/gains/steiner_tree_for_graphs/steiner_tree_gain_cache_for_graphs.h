@@ -42,6 +42,7 @@
 #include "mt-kahypar/datastructures/static_bitset.h"
 #include "mt-kahypar/datastructures/connectivity_set.h"
 #include "mt-kahypar/datastructures/delta_connectivity_set.h"
+#include "mt-kahypar/datastructures/synchronized_edge_update.h"
 #include "mt-kahypar/parallel/atomic_wrapper.h"
 #include "mt-kahypar/macros.h"
 #include "mt-kahypar/utils/range.h"
@@ -139,7 +140,7 @@ class GraphSteinerTreeGainCache {
     return _is_initialized;
   }
 
-  void reset(const bool run_parallel = true) {
+  void reset(HypernodeID /*num_nodes*/, PartitionID /*k*/, const bool run_parallel = true) {
     unused(run_parallel);
     _is_initialized = false;
   }

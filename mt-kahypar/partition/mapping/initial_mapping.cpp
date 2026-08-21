@@ -108,6 +108,18 @@ std::pair<ds::StaticHypergraph, StaticPartitionedHypergraph> convert_to_static_h
   });
   converted_phg.initializePartition();
 
+  // Map fixed vertices to new hypergraph
+  if ( phg.hasFixedVertices() ) {
+    ds::FixedVertexSupport<ds::StaticHypergraph> fixed_vertices_copy(phg.initialNumNodes(), phg.k());
+    fixed_vertices_copy.setHypergraph(&converted_hg);
+    phg.doParallelForAllNodes([&](const HypernodeID& hn) {
+      if ( phg.isFixed(hn) ) {
+        fixed_vertices_copy.fixToBlock(hn, phg.fixedVertexBlock(hn));
+      }
+    });
+    converted_hg.addFixedVertexSupport(std::move(fixed_vertices_copy));
+  }
+
   ASSERT(metrics::quality(phg, Objective::cut) == metrics::quality(converted_phg, Objective::cut));
   return std::make_pair<Hypergraph, TargetPartitionedHypergraph>(
     std::move(converted_hg), std::move(converted_phg));
@@ -211,7 +223,7 @@ void map_to_target_graph(PartitionedHypergraph& communication_hg,
 
   const HyperedgeWeight objective_after = metrics::quality(contracted_phg, Objective::steiner_tree);
   if ( objective_after < objective_before ) {
-    if ( context.partition.verbose_output ) {
+    if ( context.partition.enable_logging && context.partition.verbose_logging ) {
       LOG << GREEN << "Initial one-to-one mapping algorithm has improved objective by"
           << (objective_before - objective_after)
           << "( Before =" << objective_before << ", After =" << objective_after << ")" << END;
@@ -225,7 +237,9 @@ void map_to_target_graph(PartitionedHypergraph& communication_hg,
         communication_hg.changeNodePart(hn, from, to);
       }
     });
-  } else if ( context.partition.verbose_output && objective_before < objective_after ) {
+  } else if ( context.partition.enable_logging
+              && context.partition.verbose_logging
+              && objective_before < objective_after ) {
     // Initial mapping algorithm has worsen solution quality
     // => use input partition of communication hypergraph
     LOG << RED << "Initial one-to-one mapping algorithm has worsen objective by"

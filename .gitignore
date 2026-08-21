@@ -11,7 +11,11 @@ clang-debug/*
 *.py~
 *.cfg~
 build/*
+/build-*/
 build2/*
+build_debug/*
+build_release/*
+build_clang/*
 build_numa/*
 build_nlevel/*
 build_interleaved/*

@@ -47,7 +47,8 @@ class AGainPolicy : public Test {
   using HypergraphFactory = typename Hypergraph::Factory;
 
   AGainPolicy() :
-    hg(HypergraphFactory::construct(7 , 4, { {0, 2}, {0, 1, 3, 4}, {3, 4, 6}, {2, 5, 6} })),
+    hg(HypergraphFactory::construct(7 , 4, { {0, 2}, {0, 1, 3, 4}, {3, 4, 6}, {2, 5, 6} },
+                                    nullptr, nullptr, true  /* stable construction */)),
     context(),
     gain(nullptr) {
     context.partition.k = K;
@@ -181,7 +182,8 @@ TEST_F(AKm1PolicyK4, ComputesCorrectMoveGainForVertex2) {
   assignPartitionIDs({ 0, 3, 1, 2, 2, 0, 3 });
   Move move = gain->computeMaxGainMove(hypergraph, 6);
   ASSERT_EQ(3, move.from);
-  ASSERT_EQ(2, move.to);
+  // both moves are valid and thus decided by coin flip
+  ASSERT_TRUE(move.to == 0 || move.to == 2);
   ASSERT_EQ(-1, move.gain);
 }
 

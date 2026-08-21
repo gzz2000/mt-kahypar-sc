@@ -63,6 +63,7 @@ std::string serialize(const PartitionedHypergraph& hypergraph,
         << " seed=" << context.partition.seed
         << " num_vcycles=" << context.partition.num_vcycles
         << " deterministic=" << context.partition.deterministic
+        << " allow_empty_blocks=" << context.partition.allow_empty_blocks
         << " perform_parallel_recursion_in_deep_multilevel=" << context.partition.perform_parallel_recursion_in_deep_multilevel;
     oss << " large_hyperedge_size_threshold_factor=" << context.partition.large_hyperedge_size_threshold_factor
         << " smallest_large_he_size_threshold=" << context.partition.smallest_large_he_size_threshold
@@ -91,6 +92,12 @@ std::string serialize(const PartitionedHypergraph& hypergraph,
         << " coarsening_max_allowed_node_weight=" << context.coarsening.max_allowed_node_weight
         << " coarsening_vertex_degree_sampling_threshold=" << context.coarsening.vertex_degree_sampling_threshold
         << " coarsening_num_sub_rounds_deterministic=" << context.coarsening.num_sub_rounds_deterministic
+        << " coarsening_det_resolve_swaps=" << std::boolalpha << context.coarsening.det_resolve_swaps
+        << " coarsening_use_two_hop=" << std::boolalpha << context.coarsening.use_two_hop
+        << " coarsening_two_hop_full_shrinkage=" << std::boolalpha << context.coarsening.two_hop_full_shrinkage
+        << " coarsening_two_hop_shrink_threshold=" << context.coarsening.two_hop_shrink_threshold
+        << " coarsening_two_hop_cluster_size=" << context.coarsening.two_hop_cluster_size
+        << " coarsening_two_hop_degree_threshold=" << context.coarsening.two_hop_degree_threshold
         << " coarsening_contraction_limit=" << context.coarsening.contraction_limit
         << " rating_function=" << context.coarsening.rating.rating_function
         << " rating_heavy_node_penalty_policy=" << context.coarsening.rating.heavy_node_penalty_policy
@@ -105,11 +112,14 @@ std::string serialize(const PartitionedHypergraph& hypergraph,
         << " initial_partitioning_lp_maximum_iterations=" << context.initial_partitioning.lp_maximum_iterations
         << " initial_partitioning_lp_initial_block_size=" << context.initial_partitioning.lp_initial_block_size
         << " initial_partitioning_population_size=" << context.initial_partitioning.population_size;
-    oss << " rebalancer=" << std::boolalpha << context.refinement.rebalancer
-        << " refine_until_no_improvement=" << std::boolalpha << context.refinement.refine_until_no_improvement
+    oss << " refine_until_no_improvement=" << std::boolalpha << context.refinement.refine_until_no_improvement
         << " relative_improvement_threshold=" << context.refinement.relative_improvement_threshold
         << " max_batch_size=" << context.refinement.max_batch_size
         << " min_border_vertices_per_thread=" << context.refinement.min_border_vertices_per_thread
+        << " rebalancing_algorithm=" << context.refinement.rebalancing.algorithm
+        << " rebalancing_heavy_vertex_exclusion_factor=" << context.refinement.rebalancing.det_heavy_vertex_exclusion_factor
+        << " rebalancing_relative_deadzone_size=" << context.refinement.rebalancing.det_relative_deadzone_size
+        << " rebalancing_det_max_rounds=" << context.refinement.rebalancing.det_max_rounds
         << " lp_algorithm=" << context.refinement.label_propagation.algorithm
         << " lp_maximum_iterations=" << context.refinement.label_propagation.maximum_iterations
         << " lp_rebalancing=" << std::boolalpha << context.refinement.label_propagation.rebalancing
@@ -117,7 +127,13 @@ std::string serialize(const PartitionedHypergraph& hypergraph,
         << " lp_relative_improvement_threshold=" << context.refinement.label_propagation.relative_improvement_threshold
         << " lp_hyperedge_size_activation_threshold=" << context.refinement.label_propagation.hyperedge_size_activation_threshold
         << " sync_lp_num_sub_rounds_sync_lp=" << context.refinement.deterministic_refinement.num_sub_rounds_sync_lp
-        << " sync_lp_use_active_node_set=" << context.refinement.deterministic_refinement.use_active_node_set;
+        << " sync_lp_use_active_node_set=" << context.refinement.deterministic_refinement.use_active_node_set
+        << " jet_algorithm=" << context.refinement.jet.algorithm
+        << " jet_num_iterations_without_improvement=" << context.refinement.jet.num_iterations
+        << " jet_relative_improvement_threshold=" << context.refinement.jet.relative_improvement_threshold
+        << " jet_dynamic_rounds=" << context.refinement.jet.dynamic_rounds
+        << " jet_initial_negative_gain_factor=" << context.refinement.jet.initial_negative_gain_factor
+        << " jet_initial_final_negative_gain_factor=" << context.refinement.jet.final_negative_gain_factor;
     oss << " fm_algorithm=" << context.refinement.fm.algorithm
         << " fm_multitry_rounds=" << context.refinement.fm.multitry_rounds
         << " fm_rollback_parallel=" << std::boolalpha << context.refinement.fm.rollback_parallel
@@ -147,7 +163,6 @@ std::string serialize(const PartitionedHypergraph& hypergraph,
         << " global_refine_lp_algorithm=" << context.refinement.global.lp_algorithm
         << " global_refine_lp_unconstrained=" << std::boolalpha << context.refinement.global.lp_unconstrained;
     oss << " flow_algorithm=" << context.refinement.flows.algorithm
-        << " flow_parallel_searches_multiplier=" << context.refinement.flows.parallel_searches_multiplier
         << " flow_num_parallel_searches=" << context.refinement.flows.num_parallel_searches
         << " flow_max_bfs_distance=" << context.refinement.flows.max_bfs_distance
         << " flow_min_relative_improvement_per_round=" << context.refinement.flows.min_relative_improvement_per_round
@@ -195,7 +210,9 @@ std::string serialize(const PartitionedHypergraph& hypergraph,
       if ( context.partition.objective != Objective::soed ) {
         oss << " soed=" << metrics::quality(hypergraph, Objective::soed);
       }
-      oss << " imbalance=" << metrics::imbalance(hypergraph, context);
+      BalanceMetrics imbalance = metrics::imbalance(hypergraph, context);
+      oss << " imbalance=" << imbalance.imbalance_value;
+      oss << " violates_non_empty_blocks=" << imbalance.violates_non_empty_blocks;
     }
     oss << " totalPartitionTime=" << elapsed_seconds.count();
 

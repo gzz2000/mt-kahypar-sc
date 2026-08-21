@@ -207,7 +207,7 @@ submodules (downloaded through git).
 - xxHash - usable hash function
 
 *** as third party hash tables (for benchmarks):
-- TBB - ~tbb_kahypar::concurrent_hash_map and tbb_kahypar::concurrent_unordered_map~
+- TBB - ~tbb::concurrent_hash_map and tbb::concurrent_unordered_map~
 - LibCuckoo - ~cuckoohash_map~
 - Junction - ~junction::ConcurrentMap_Linear ..._Grampa ..._Leapfrog~
 - Folly - ~folly::AtomicHashMap~
